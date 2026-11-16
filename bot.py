@@ -9,8 +9,7 @@ import db
 import keyboards as kb
 
 load_dotenv()
-BOT_TOKEN = os.getenv("BOT_TOKEN")
-ADMIN_ID = int(os.getenv("ADMIN_ID", "0"))
+BOT_TOKEN = os.getenv("BOT_TOKEN", "").strip()
 
 bot = telebot.TeleBot(BOT_TOKEN)
 db.init_db()
@@ -26,8 +25,15 @@ DEFAULT_BOY_AVATAR = "https://cdn-icons-png.flaticon.com/512/4140/4140048.png"
 DEFAULT_GIRL_AVATAR = "https://cdn-icons-png.flaticon.com/512/4140/4140047.png"
 
 
+def get_admin_id():
+    raw = os.getenv("ADMIN_ID", "0")
+    digits = re.sub(r"\D", "", str(raw))
+    return int(digits) if digits else 0
+
+
 def is_admin(user_id):
-    return ADMIN_ID != 0 and int(user_id) == ADMIN_ID
+    aid = get_admin_id()
+    return aid != 0 and int(user_id) == aid
 
 
 def get_main_kb(user_id):
@@ -130,7 +136,6 @@ def handle_start(message):
     user_id = message.chat.id
     parts = (message.text or "").split()
 
-    # اگر ادمین روی لینک آبی (عکس) یا (ویدیو) داخل تاریخچه چت زده باشد
     if len(parts) > 1 and parts[1].startswith("media_") and is_admin(user_id):
         try:
             log_id = int(parts[1].replace("media_", ""))
@@ -185,14 +190,14 @@ def handle_start(message):
 
 # ==================== پنل مدیریت ۱۰۰٪ کیبوردی (/admin) ====================
 
-@bot.message_handler(commands=["admin"])
+@bot.message_handler(regexp=r"^/admin(@[a-zA-Z0-9_]+)?$")
 @bot.message_handler(
-    func=lambda msg: is_admin(msg.chat.id)
-    and msg.text in ["🎛 پنل مدیریت", "🔙 بازگشت به پنل مدیریت"]
+    func=lambda msg: msg.text in ["🎛 پنل مدیریت", "🔙 بازگشت به پنل مدیریت"]
 )
 def open_admin_panel(message):
     uid = message.chat.id
     if not is_admin(uid):
+        bot.send_message(uid, "متوجه نشدم")
         return
     USER_CONTEXT.pop(uid, None)
     bot.send_message(
@@ -1119,14 +1124,15 @@ def report_partner(message):
         user_id, "✅ گزارش شما ثبت شد و توسط ادمین بررسی خواهد شد."
     )
 
-    if ADMIN_ID != 0:
+    aid = get_admin_id()
+    if aid != 0:
         report_text = (
             f"🚨 گزارش تخلف جدید!\n"
             f"شاکی: {user.get('name')} (/{user.get('custom_id')})\n"
             f"متهم: {partner.get('name') if partner else '-'} (/{partner.get('custom_id') if partner else '-'})"
         )
         try:
-            bot.send_message(ADMIN_ID, report_text)
+            bot.send_message(aid, report_text)
         except Exception:
             pass
 
