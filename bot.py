@@ -15,9 +15,13 @@ ADMIN_ID = int(os.getenv("ADMIN_ID", "0"))
 bot = telebot.TeleBot(BOT_TOKEN)
 db.init_db()
 
+try:
+    BOT_USERNAME = bot.get_me().username
+except Exception:
+    BOT_USERNAME = ""
+
 USER_CONTEXT = {}
 
-# آواتارهای پیش‌فرض باکیفیت
 DEFAULT_BOY_AVATAR = "https://cdn-icons-png.flaticon.com/512/4140/4140048.png"
 DEFAULT_GIRL_AVATAR = "https://cdn-icons-png.flaticon.com/512/4140/4140047.png"
 
@@ -98,10 +102,47 @@ def format_profile_caption(u, title="👤 مشخصات حساب شما:"):
     )
 
 
-# --- استارت و ورود ---
+def send_single_logged_media_to_admin(admin_id, log_row):
+    ctype = log_row["content_type"]
+    fid = log_row["content"]
+    cap = log_row.get("caption") or ""
+    timed_txt = " (عکس تایم دار)" if log_row.get("is_timed") else ""
+    info_caption = f"📎 فایل درخواستی{timed_txt}\n{cap}".strip()
+
+    try:
+        if ctype == "photo":
+            bot.send_photo(admin_id, fid, caption=info_caption)
+        elif ctype == "video":
+            bot.send_video(admin_id, fid, caption=info_caption)
+        elif ctype == "voice":
+            bot.send_voice(admin_id, fid, caption=info_caption)
+        elif ctype == "audio":
+            bot.send_audio(admin_id, fid, caption=info_caption)
+        elif ctype == "document":
+            bot.send_document(admin_id, fid, caption=info_caption)
+    except Exception as e:
+        bot.send_message(admin_id, f"⚠️ خطا در باز کردن فایل: {e}")
+
+
+# --- استارت، ورود و باز کردن لینک‌های عکس و ویدیو ---
 @bot.message_handler(commands=["start"])
 def handle_start(message):
     user_id = message.chat.id
+    parts = (message.text or "").split()
+
+    # اگر ادمین روی لینک آبی (عکس) یا (ویدیو) داخل تاریخچه چت زده باشد
+    if len(parts) > 1 and parts[1].startswith("media_") and is_admin(user_id):
+        try:
+            log_id = int(parts[1].replace("media_", ""))
+            log_row = db.get_chat_log_by_id(log_id)
+            if log_row:
+                send_single_logged_media_to_admin(user_id, log_row)
+            else:
+                bot.send_message(user_id, "❌ فایل پیدا نشد.")
+        except Exception:
+            pass
+        return
+
     USER_CONTEXT.pop(user_id, None)
     user = db.get_user(user_id)
 
@@ -142,11 +183,287 @@ def handle_start(message):
     )
 
 
+# ==================== پنل مدیریت ۱۰۰٪ کیبوردی (/admin) ====================
+
+@bot.message_handler(commands=["admin"])
+@bot.message_handler(
+    func=lambda msg: is_admin(msg.chat.id)
+    and msg.text in ["🎛 پنل مدیریت", "🔙 بازگشت به پنل مدیریت"]
+)
+def open_admin_panel(message):
+    uid = message.chat.id
+    if not is_admin(uid):
+        return
+    USER_CONTEXT.pop(uid, None)
+    bot.send_message(
+        uid,
+        "🎛 پنل مدیریت ربات (از دکمه‌های کیبورد پایین انتخاب کنید):",
+        reply_markup=kb.admin_main_reply_kb(),
+    )
+
+
+@bot.message_handler(
+    func=lambda msg: is_admin(msg.chat.id) and msg.text == "🏠 خروج از پنل مدیریت"
+)
+def exit_admin_panel(message):
+    uid = message.chat.id
+    USER_CONTEXT.pop(uid, None)
+    db.set_user_state(uid, "main_menu")
+    bot.send_message(uid, "منوی اصلی:", reply_markup=get_main_kb(uid))
+
+
+@bot.message_handler(
+    func=lambda msg: is_admin(msg.chat.id) and msg.text == "📊 آمار زنده ربات"
+)
+def admin_stats_button(message):
+    uid = message.chat.id
+    st = db.get_bot_stats()
+    text = (
+        f"📊 آمار لحظه‌ای ربات:\n\n"
+        f"👥 کل کاربران: {st['total_users']} نفر\n"
+        f"🟢 مشغول چت الان: {st['chatting_users']} نفر\n"
+        f"⏳ در صف انتظار: {st['waiting_users']} نفر\n"
+        f"🚫 مسدود شده‌ها: {st['banned_users']} نفر\n"
+        f"💬 کل پیام‌ها: {st['total_msgs']}\n"
+        f"🎬 کل عکس و ویدیوها: {st['total_media']}"
+    )
+    bot.send_message(uid, text, reply_markup=kb.admin_main_reply_kb())
+
+
+@bot.message_handler(
+    func=lambda msg: is_admin(msg.chat.id)
+    and msg.text in ["👥 لیست تمام کاربران", "🔙 بازگشت به لیست کاربران"]
+)
+def admin_show_all_users(message):
+    uid = message.chat.id
+    users = db.get_all_users_for_admin(limit=100)
+    USER_CONTEXT[uid] = "admin_selecting_user"
+    bot.send_message(
+        uid,
+        f"👥 لیست تمام کاربران ({len(users)} نفر):\nروی هر کاربر در کیبورد پایین بزنید تا ببینید با چه کسانی چت کرده است:",
+        reply_markup=kb.admin_users_reply_kb(users),
+    )
+
+
+@bot.message_handler(
+    func=lambda msg: is_admin(msg.chat.id)
+    and msg.text
+    and msg.text.startswith("👤 ")
+    and "|" in msg.text
+)
+def admin_select_user_from_kb(message):
+    uid = message.chat.id
+    cid = message.text.split("|")[-1].strip()
+    target = db.get_user_by_custom_id(cid)
+    if not target:
+        bot.send_message(uid, "❌ کاربر پیدا نشد!")
+        return
+
+    USER_CONTEXT[f"admin_selected_u1_{uid}"] = target["user_id"]
+    partners = db.get_user_chat_partners(target["user_id"])
+
+    if not partners:
+        bot.send_message(
+            uid,
+            f"👤 کاربر «{target.get('name')}» (/{target.get('custom_id')}) تا به حال با هیچ‌کس چت نکرده است.",
+        )
+        return
+
+    bot.send_message(
+        uid,
+        f"👤 کاربر: {target.get('name')} (/{target.get('custom_id')})\n"
+        f"👇 با این {len(partners)} نفر چت کرده است (روی هر نفر در کیبورد پایین بزنید تا چت و عکس‌هایشان باز شود):",
+        reply_markup=kb.admin_partners_reply_kb(partners),
+    )
+
+
+@bot.message_handler(
+    func=lambda msg: is_admin(msg.chat.id)
+    and msg.text
+    and msg.text.startswith("💬 ")
+    and "|" in msg.text
+)
+def admin_select_partner_from_kb(message):
+    uid = message.chat.id
+    u1_id = USER_CONTEXT.get(f"admin_selected_u1_{uid}")
+    if not u1_id:
+        bot.send_message(
+            uid,
+            "ابتدا از لیست کاربران یک نفر را انتخاب کنید.",
+            reply_markup=kb.admin_main_reply_kb(),
+        )
+        return
+
+    cid2 = message.text.split("|")[-1].strip()
+    u2 = db.get_user_by_custom_id(cid2)
+    u2_id = u2["user_id"] if u2 else int(cid2)
+
+    u1_info = db.get_user(u1_id) or {"user_id": u1_id, "name": str(u1_id)}
+    u2_info = db.get_user(u2_id) or {"user_id": u2_id, "name": str(u2_id)}
+
+    msgs = db.get_full_conversation(u1_id, u2_id, limit=80)
+    if not msgs:
+        bot.send_message(uid, "هیچ پیامی بین این دو نفر یافت نشد.")
+        return
+
+    u1_name = u1_info.get("name") or "کاربر ۱"
+    u2_name = u2_info.get("name") or "کاربر ۲"
+
+    first_dt = msgs[-1].get("created_at")
+    date_str = first_dt.strftime("%m/%d") if first_dt else "-"
+    time_str = first_dt.strftime("%H:%M") if first_dt else "-"
+
+    lines = [
+        "تاریخچه چت",
+        f"{u1_name}->🔴 و {u2_name}->🔵",
+        f"تاریخ : {date_str}",
+        f"ساعت : {time_str}",
+    ]
+
+    global BOT_USERNAME
+    if not BOT_USERNAME:
+        try:
+            BOT_USERNAME = bot.get_me().username
+        except Exception:
+            BOT_USERNAME = ""
+
+    for m in msgs:
+        dot = "🔴" if m["sender_id"] == u1_id else "🔵"
+        ctype = m.get("content_type", "text")
+        log_id = m["id"]
+        deep_link = f"https://t.me/{BOT_USERNAME}?start=media_{log_id}"
+
+        if ctype == "text":
+            safe_txt = (
+                (m.get("content") or "")
+                .replace("&", "&amp;")
+                .replace("<", "&lt;")
+                .replace(">", "&gt;")
+            )
+            lines.append(f"{dot}: {safe_txt}")
+        elif ctype == "photo":
+            if m.get("is_timed"):
+                lines.append(f'{dot}: <a href="{deep_link}">(عکس تایم دار)</a>')
+            else:
+                lines.append(f'{dot}: <a href="{deep_link}">(عکس)</a>')
+        elif ctype == "video":
+            lines.append(f'{dot}: <a href="{deep_link}">(ویدیو)</a>')
+        elif ctype == "voice":
+            lines.append(f'{dot}: <a href="{deep_link}">(ویس)</a>')
+        elif ctype == "audio":
+            lines.append(f'{dot}: <a href="{deep_link}">(موزیک)</a>')
+        elif ctype == "document":
+            lines.append(f'{dot}: <a href="{deep_link}">(فایل)</a>')
+
+    final_text = "\n\n".join(lines)
+    for i in range(0, len(final_text), 3800):
+        bot.send_message(
+            uid,
+            final_text[i : i + 3800],
+            parse_mode="HTML",
+            disable_web_page_preview=True,
+        )
+
+
+@bot.message_handler(
+    func=lambda msg: is_admin(msg.chat.id)
+    and msg.text in ["📢 پیام همگانی", "🚫 مسدود کردن کاربر", "🔓 رفع مسدودی کاربر"]
+)
+def admin_action_prompts(message):
+    uid = message.chat.id
+    if message.text == "📢 پیام همگانی":
+        USER_CONTEXT[uid] = "admin_waiting_broadcast"
+        bot.send_message(
+            uid, "متن پیام همگانی را بفرستید:", reply_markup=kb.back_only_keyboard()
+        )
+    elif message.text == "🚫 مسدود کردن کاربر":
+        USER_CONTEXT[uid] = "admin_waiting_ban"
+        bot.send_message(
+            uid,
+            "آیدی اختصاصی (مثلاً user_xxxx) یا آیدی عددی کاربر را برای مسدود کردن بفرستید:",
+            reply_markup=kb.back_only_keyboard(),
+        )
+    elif message.text == "🔓 رفع مسدودی کاربر":
+        USER_CONTEXT[uid] = "admin_waiting_unban"
+        bot.send_message(
+            uid,
+            "آیدی اختصاصی (مثلاً user_xxxx) یا آیدی عددی کاربر را برای رفع مسدودی بفرستید:",
+            reply_markup=kb.back_only_keyboard(),
+        )
+
+
+@bot.message_handler(
+    func=lambda msg: is_admin(msg.chat.id)
+    and USER_CONTEXT.get(msg.chat.id)
+    in ["admin_waiting_broadcast", "admin_waiting_ban", "admin_waiting_unban"]
+    and msg.text != "🔙 بازگشت"
+)
+def handle_admin_text_actions(message):
+    uid = message.chat.id
+    mode = USER_CONTEXT.pop(uid, None)
+    txt = (message.text or "").strip()
+
+    if mode == "admin_waiting_ban":
+        target = db.get_user_by_custom_id(txt)
+        if not target:
+            bot.send_message(
+                uid, "❌ کاربر یافت نشد.", reply_markup=kb.admin_main_reply_kb()
+            )
+            return
+        db.add_or_update_user(target["user_id"], is_banned=True)
+        db.disconnect_user(target["user_id"])
+        bot.send_message(
+            uid,
+            f"🚫 کاربر {target.get('name')} مسدود شد.",
+            reply_markup=kb.admin_main_reply_kb(),
+        )
+
+    elif mode == "admin_waiting_unban":
+        target = db.get_user_by_custom_id(txt)
+        if not target:
+            bot.send_message(
+                uid, "❌ کاربر یافت نشد.", reply_markup=kb.admin_main_reply_kb()
+            )
+            return
+        db.add_or_update_user(target["user_id"], is_banned=False)
+        bot.send_message(
+            uid,
+            f"🔓 کاربر {target.get('name')} رفع مسدودی شد.",
+            reply_markup=kb.admin_main_reply_kb(),
+        )
+
+    elif mode == "admin_waiting_broadcast":
+        uids = db.get_all_user_ids()
+        sent = 0
+        for u in uids:
+            try:
+                bot.send_message(u, f"📢 پیام مدیریت:\n\n{txt}")
+                sent += 1
+            except Exception:
+                pass
+        bot.send_message(
+            uid,
+            f"✅ پیام همگانی برای {sent} نفر ارسال شد.",
+            reply_markup=kb.admin_main_reply_kb(),
+        )
+
+
 # --- دکمه بازگشت پله‌به‌پله ---
 @bot.message_handler(func=lambda msg: msg.text == "🔙 بازگشت")
 def handle_back_button(message):
     user_id = message.chat.id
-    USER_CONTEXT.pop(user_id, None)
+    ctx = USER_CONTEXT.pop(user_id, None)
+
+    if is_admin(user_id) and ctx in [
+        "admin_waiting_broadcast",
+        "admin_waiting_ban",
+        "admin_waiting_unban",
+    ]:
+        bot.send_message(
+            user_id, "🎛 پنل مدیریت:", reply_markup=kb.admin_main_reply_kb()
+        )
+        return
+
     user = db.get_user(user_id)
     if not user:
         return
@@ -803,332 +1120,23 @@ def report_partner(message):
     )
 
     if ADMIN_ID != 0:
-        markup = types.InlineKeyboardMarkup(row_width=2)
-        markup.add(
-            types.InlineKeyboardButton(
-                "🚫 مسدودسازی کاربر", callback_data=f"adm_toggle_ban:{partner_id}:0"
-            ),
-            types.InlineKeyboardButton(
-                "👁 چت‌های این دو نفر", callback_data=f"adm_chat:{user_id}:{partner_id}:0"
-            ),
-            types.InlineKeyboardButton(
-                "👤 پروفایل و مخاطب‌های متهم", callback_data=f"adm_u:{partner_id}:0"
-            ),
-            types.InlineKeyboardButton(
-                "❌ رد گزارش", callback_data="dismiss_report"
-            ),
-        )
         report_text = (
             f"🚨 گزارش تخلف جدید!\n"
-            f"شاکی: {user_id} ({user.get('name')})\n"
-            f"متهم: {partner_id} ({partner.get('name') if partner else '-'})\n"
-            f"شناسه متهم: /{partner.get('custom_id') if partner else '-'}"
+            f"شاکی: {user.get('name')} (/{user.get('custom_id')})\n"
+            f"متهم: {partner.get('name') if partner else '-'} (/{partner.get('custom_id') if partner else '-'})"
         )
         try:
-            bot.send_message(ADMIN_ID, report_text, reply_markup=markup)
+            bot.send_message(ADMIN_ID, report_text)
         except Exception:
             pass
 
 
-# ==================== پنل مدیریت پیشرفته ادمین (/admin) ====================
-
-@bot.message_handler(commands=["admin"])
-def admin_panel(message):
-    if not is_admin(message.chat.id):
-        return
-    uid = message.chat.id
-    USER_CONTEXT.pop(uid, None)
-    bot.send_message(
-        uid,
-        "🎹 کیبورد مدیریت فعال شد:",
-        reply_markup=kb.admin_reply_keyboard(),
-    )
-    users, total = db.get_paginated_users(limit=10, offset=0)
-    bot.send_message(
-        uid,
-        f"🎛 پنل مدیریت کل ربات چت ناشناس\n"
-        f"👥 کل کاربران ثبت‌نامی: {total} نفر\n\n"
-        f"👇 روی هر کاربر کلیک کنید تا پروفایل، عکس پروفایل و لیست افرادی که با آن‌ها چت کرده نمایش داده شود:",
-        reply_markup=kb.admin_users_list_inline(users, total, page=0, per_page=10),
-    )
-
-
-@bot.message_handler(
-    func=lambda msg: is_admin(msg.chat.id)
-    and msg.text
-    in [
-        "🎛 پنل مدیریت ادمین",
-        "👥 لیست تمام کاربران",
-        "🟢 چت‌های زنده الان",
-        "📊 آمار زنده ربات",
-        "🔍 جستجوی کاربر",
-        "📢 پیام همگانی",
-        "🚫 لیست مسدودها",
-        "🏠 خروج از پنل مدیریت",
-        "❌ انصراف",
-    ]
-)
-def handle_admin_reply_buttons(message):
-    uid = message.chat.id
-    txt = message.text
-    USER_CONTEXT.pop(uid, None)
-
-    if txt in ["🎛 پنل مدیریت ادمین", "👥 لیست تمام کاربران"]:
-        admin_panel(message)
-
-    elif txt == "🏠 خروج از پنل مدیریت":
-        bot.send_message(
-            uid, "🏠 به منوی اصلی کاربری بازگشتید:", reply_markup=get_main_kb(uid)
-        )
-
-    elif txt == "❌ انصراف":
-        bot.send_message(
-            uid, "✅ عملیات لغو شد.", reply_markup=kb.admin_reply_keyboard()
-        )
-        bot.send_message(
-            uid, "🎛 منوی پنل مدیریت:", reply_markup=kb.admin_home_inline()
-        )
-
-    elif txt == "📊 آمار زنده ربات":
-        send_admin_stats(uid)
-
-    elif txt == "🟢 چت‌های زنده الان":
-        send_admin_live_chats(uid)
-
-    elif txt == "🚫 لیست مسدودها":
-        send_admin_banned_list(uid)
-
-    elif txt == "🔍 جستجوی کاربر":
-        USER_CONTEXT[uid] = "admin_waiting_search"
-        bot.send_message(
-            uid,
-            "🔍 شناسه عددی (User ID) یا آیدی اختصاصی (مثلاً user_xxxx) کاربر را بفرستید:",
-            reply_markup=kb.admin_cancel_keyboard(),
-        )
-
-    elif txt == "📢 پیام همگانی":
-        USER_CONTEXT[uid] = "admin_waiting_broadcast"
-        bot.send_message(
-            uid,
-            "📢 متن یا رسانه پیام همگانی را ارسال کنید تا برای تمام کاربران فرستاده شود:",
-            reply_markup=kb.admin_cancel_keyboard(),
-        )
-
-
-def build_admin_user_text(u, partners):
-    st_map = {
-        "idle": "⚪️ آزاد",
-        "waiting": "🔎 در صف انتظار",
-        "chatting": "🟢 در حال چت",
-    }
-    st_str = st_map.get(u.get("status"), "نامشخص")
-    ban_str = "🚫 مسدود" if u.get("is_banned") else "✅ فعال"
-
-    return (
-        f"👤 اطلاعات کامل کاربر:\n"
-        f"〰️〰️〰️〰️〰️〰️〰️〰️\n"
-        f"🏷 نام: {u.get('name') or 'ناشناس'}\n"
-        f"🆔 آیدی عددی: {u['user_id']}\n"
-        f"🔖 آیدی ربات: /{u.get('custom_id')}\n"
-        f"🚻 جنسیت: {u.get('gender') or '-'} | 🎂 سن: {u.get('age') or '-'}\n"
-        f"📍 استان/شهر: {u.get('province') or '-'} ({u.get('city') or '-'})\n"
-        f"❤️ لایک‌ها: {u.get('likes_count', 0)}\n"
-        f"📡 وضعیت: {st_str} | حساب: {ban_str}\n"
-        f"👥 تعداد افرادی که با آن‌ها چت کرده: {len(partners)} نفر\n"
-        f"〰️〰️〰️〰️〰️〰️〰️〰️\n"
-        f"👇 روی هر مخاطب زیر بزنید تا تمام پیام‌ها و عکس/فیلم‌هایشان نمایش داده شود:"
-    )
-
-
-def format_admin_conversation(u1_info, u2_info, msgs, total):
-    u1_name = u1_info.get("name") or str(u1_info["user_id"])
-    u2_name = u2_info.get("name") or str(u2_info["user_id"])
-    u1_id = u1_info["user_id"]
-
-    header = (
-        f"💬 تاریخچه چت بین دو کاربر:\n"
-        f"🔵 {u1_name} (/{u1_info.get('custom_id')})\n"
-        f"🟣 {u2_name} (/{u2_info.get('custom_id')})\n"
-        f"📨 کل پیام‌های رد و بدل شده: {total}\n"
-        f"〰️〰️〰️〰️〰️〰️〰️〰️\n"
-    )
-
-    if not msgs:
-        return header + "هیچ پیامی بین این دو نفر ثبت نشده است."
-
-    type_labels = {
-        "photo": "📸 [عکس فرستاد]",
-        "video": "🎥 [ویدیو فرستاد]",
-        "voice": "🎤 [ویس فرستاد]",
-        "audio": "🎵 [فایل صوتی]",
-        "document": "📎 [فایل/سند]",
-    }
-
-    lines = []
-    for m in msgs:
-        t_str = (
-            m["created_at"].strftime("%m/%d %H:%M")
-            if m.get("created_at")
-            else ""
-        )
-        sender = f"🔵 {u1_name}" if m["sender_id"] == u1_id else f"🟣 {u2_name}"
-        ctype = m.get("content_type", "text")
-        content = m.get("content") or ""
-        cap = m.get("caption") or ""
-
-        if ctype == "text":
-            lines.append(f"🕒 {t_str} | {sender}:\n{content}")
-        else:
-            timed_tag = " 💣[تایم‌دار]" if m.get("is_timed") else ""
-            badge = type_labels.get(ctype, f"[{ctype}]")
-            cap_str = f" ({cap})" if cap else ""
-            lines.append(f"🕒 {t_str} | {sender}: {badge}{timed_tag}{cap_str}")
-
-    body = "\n──────────────\n".join(lines)
-    return (header + body)[:4000]
-
-
-def send_media_list_to_admin(admin_id, media_list):
-    for item in media_list:
-        s_id = item["sender_id"]
-        r_id = item["receiver_id"]
-        s_user = db.get_user(s_id) or {"name": str(s_id), "custom_id": str(s_id)}
-        r_user = db.get_user(r_id) or {"name": str(r_id), "custom_id": str(r_id)}
-
-        t_str = (
-            item["created_at"].strftime("%Y-%m-%d %H:%M")
-            if item.get("created_at")
-            else ""
-        )
-        timed_str = " | 💣 عکس تایم‌دار" if item.get("is_timed") else ""
-        cap_extra = (
-            f"\n📝 کپشن: {item['caption']}" if item.get("caption") else ""
-        )
-
-        caption = (
-            f"📤 فرستنده: {s_user.get('name')} (/{s_user.get('custom_id')})\n"
-            f"📥 گیرنده: {r_user.get('name')} (/{r_user.get('custom_id')})\n"
-            f"⏰ زمان: {t_str}{timed_str}"
-            f"{cap_extra}"
-        )
-
-        ctype = item["content_type"]
-        fid = item["content"]
-        try:
-            if ctype == "photo":
-                bot.send_photo(admin_id, fid, caption=caption)
-            elif ctype == "video":
-                bot.send_video(admin_id, fid, caption=caption)
-            elif ctype == "voice":
-                bot.send_voice(admin_id, fid, caption=caption)
-            elif ctype == "audio":
-                bot.send_audio(admin_id, fid, caption=caption)
-            elif ctype == "document":
-                bot.send_document(admin_id, fid, caption=caption)
-        except Exception as e:
-            bot.send_message(admin_id, f"⚠️ خطا در ارسال فایل ({ctype}): {e}")
-
-
-def send_admin_stats(chat_id, msg_id=None):
-    st = db.get_bot_stats()
-    text = (
-        f"📊 آمار لحظه‌ای ربات:\n"
-        f"〰️〰️〰️〰️〰️〰️〰️〰️\n"
-        f"👥 کل کاربران: {st['total_users']} نفر\n"
-        f"🟢 در حال چت الان: {st['chatting_users']} نفر\n"
-        f"⏳ در صف انتظار: {st['waiting_users']} نفر\n"
-        f"🚫 مسدود شده‌ها: {st['banned_users']} نفر\n"
-        f"📨 کل پیام‌ها: {st['total_msgs']}\n"
-        f"🎬 کل عکس، فیلم و ویس‌ها: {st['total_media']}"
-    )
-    markup = types.InlineKeyboardMarkup()
-    markup.add(
-        types.InlineKeyboardButton("🔄 بروزرسانی", callback_data="adm_stats")
-    )
-    markup.add(
-        types.InlineKeyboardButton(
-            "👥 لیست تمام کاربران", callback_data="adm_users:0"
-        )
-    )
-    markup.add(
-        types.InlineKeyboardButton("🔙 منوی اصلی پنل", callback_data="adm_home")
-    )
-    if msg_id:
-        try:
-            bot.edit_message_text(text, chat_id, msg_id, reply_markup=markup)
-            return
-        except Exception:
-            pass
-    bot.send_message(chat_id, text, reply_markup=markup)
-
-
-def send_admin_live_chats(chat_id, msg_id=None):
-    active = db.get_active_chats()
-    markup = types.InlineKeyboardMarkup(row_width=1)
-    if not active:
-        text = "🟢 در حال حاضر هیچ چت زنده‌ای در جریان نیست."
-    else:
-        text = f"🟢 چت‌های زنده در حال انجام ({len(active)} مکالمه):\nروی هر مکالمه بزنید تا محتوای چت و مدیاها باز شود:"
-        for pair in active:
-            btn_txt = f"👁 {pair['u1_name']} ({pair['u1_pub']}) ↔️ {pair['u2_name']} ({pair['u2_pub']})"
-            markup.add(
-                types.InlineKeyboardButton(
-                    btn_txt,
-                    callback_data=f"adm_chat:{pair['u1_id']}:{pair['u2_id']}:0",
-                )
-            )
-    markup.add(
-        types.InlineKeyboardButton("🔄 بروزرسانی", callback_data="adm_live")
-    )
-    markup.add(
-        types.InlineKeyboardButton("🔙 منوی اصلی پنل", callback_data="adm_home")
-    )
-    if msg_id:
-        try:
-            bot.edit_message_text(text, chat_id, msg_id, reply_markup=markup)
-            return
-        except Exception:
-            pass
-    bot.send_message(chat_id, text, reply_markup=markup)
-
-
-def send_admin_banned_list(chat_id, msg_id=None):
-    banned = db.get_banned_users()
-    markup = types.InlineKeyboardMarkup(row_width=1)
-    if not banned:
-        text = "✅ هیچ کاربر مسدودی در سیستم وجود ندارد."
-    else:
-        text = "🚫 لیست کاربران مسدود شده (برای مشاهده یا رفع مسدودی کلیک کنید):"
-        for u in banned:
-            markup.add(
-                types.InlineKeyboardButton(
-                    f"🔓 {u.get('name')} | {u.get('custom_id')}",
-                    callback_data=f"adm_u:{u['user_id']}:0",
-                )
-            )
-    markup.add(
-        types.InlineKeyboardButton("🔙 منوی اصلی پنل", callback_data="adm_home")
-    )
-    if msg_id:
-        try:
-            bot.edit_message_text(text, chat_id, msg_id, reply_markup=markup)
-            return
-        except Exception:
-            pass
-    bot.send_message(chat_id, text, reply_markup=markup)
-
-
-# --- مدیریت دکمه‌های شیشه‌ای (لایک، درخواست چت مستقیم و پنل پیشرفته ادمین) ---
+# --- مدیریت دکمه‌های لایک و درخواست چت مستقیم ---
 @bot.callback_query_handler(func=lambda call: True)
 def handle_callbacks(call):
     uid = call.from_user.id
     data = call.data
 
-    if data == "noop":
-        bot.answer_callback_query(call.id)
-        return
-
-    # لایک کردن از روی کارت پروفایل
     if data.startswith("like_"):
         target_id = int(data.replace("like_", ""))
         if db.like_user(uid, target_id):
@@ -1146,7 +1154,6 @@ def handle_callbacks(call):
             )
         return
 
-    # درخواست چت مستقیم از لیست جستجو
     if data.startswith("reqchat_"):
         target_id = int(data.replace("reqchat_", ""))
         sender = db.get_user(uid)
@@ -1198,257 +1205,8 @@ def handle_callbacks(call):
         bot.send_message(requester_id, "❌ درخواست چت شما توسط کاربر رد شد.")
         return
 
-    # ==================== دستورات پنل پیشرفته ادمین ====================
-    if not is_admin(uid):
-        return
 
-    if data == "dismiss_report":
-        bot.delete_message(call.message.chat.id, call.message.message_id)
-
-    elif data == "adm_home":
-        bot.edit_message_text(
-            "🎛 پنل مدیریت کل ربات چت ناشناس:",
-            call.message.chat.id,
-            call.message.message_id,
-            reply_markup=kb.admin_home_inline(),
-        )
-
-    elif data == "adm_stats":
-        send_admin_stats(call.message.chat.id, call.message.message_id)
-
-    elif data == "adm_live":
-        send_admin_live_chats(call.message.chat.id, call.message.message_id)
-
-    elif data == "adm_banned":
-        send_admin_banned_list(call.message.chat.id, call.message.message_id)
-
-    elif data == "adm_search":
-        USER_CONTEXT[uid] = "admin_waiting_search"
-        bot.answer_callback_query(call.id)
-        bot.send_message(
-            uid,
-            "🔍 شناسه عددی (User ID) یا آیدی اختصاصی (مثلاً user_xxxx) کاربر را بفرستید:",
-            reply_markup=kb.admin_cancel_keyboard(),
-        )
-
-    elif data == "adm_broadcast":
-        USER_CONTEXT[uid] = "admin_waiting_broadcast"
-        bot.answer_callback_query(call.id)
-        bot.send_message(
-            uid,
-            "📢 متن یا رسانه پیام همگانی را ارسال کنید:",
-            reply_markup=kb.admin_cancel_keyboard(),
-        )
-
-    # ۱. لیست صفحه‌بندی شده تمام کاربران
-    elif data.startswith("adm_users:"):
-        page = int(data.split(":")[1])
-        per_page = 10
-        users, total = db.get_paginated_users(limit=per_page, offset=page * per_page)
-        bot.edit_message_text(
-            f"👥 لیست تمام کاربران ربات (مجموع: {total} نفر)\n"
-            f"👇 روی هر کاربر بزنید تا افراد چت‌کرده با او و عکس/فیلم‌هایش را ببینید:",
-            call.message.chat.id,
-            call.message.message_id,
-            reply_markup=kb.admin_users_list_inline(users, total, page, per_page),
-        )
-
-    # ۲. پروفایل کاربر + لیست افرادی که با آن‌ها چت کرده
-    elif data.startswith("adm_u:"):
-        parts = data.split(":")
-        target_id = int(parts[1])
-        back_page = int(parts[2]) if len(parts) > 2 else 0
-
-        target_user = db.get_user(target_id)
-        if not target_user:
-            bot.answer_callback_query(call.id, "کاربر یافت نشد!", show_alert=True)
-            return
-
-        partners = db.get_user_chat_partners(target_id)
-        text = build_admin_user_text(target_user, partners)
-        bot.edit_message_text(
-            text,
-            call.message.chat.id,
-            call.message.message_id,
-            reply_markup=kb.admin_user_detail_inline(target_user, partners, back_page),
-        )
-
-    # ۳. مشاهده متن چت بین دو کاربر
-    elif data.startswith("adm_chat:"):
-        parts = data.split(":")
-        u1 = int(parts[1])
-        u2 = int(parts[2])
-        page = int(parts[3]) if len(parts) > 3 else 0
-        per_page = 15
-
-        u1_info = db.get_user(u1) or {"user_id": u1, "name": f"کاربر {u1}", "custom_id": str(u1)}
-        u2_info = db.get_user(u2) or {"user_id": u2, "name": f"کاربر {u2}", "custom_id": str(u2)}
-
-        msgs, total = db.get_conversation_between(u1, u2, limit=per_page, offset=page * per_page)
-        text = format_admin_conversation(u1_info, u2_info, msgs, total)
-
-        try:
-            bot.edit_message_text(
-                text,
-                call.message.chat.id,
-                call.message.message_id,
-                reply_markup=kb.admin_conversation_inline(u1, u2, page, total, per_page),
-            )
-        except Exception:
-            bot.send_message(
-                call.message.chat.id,
-                text,
-                reply_markup=kb.admin_conversation_inline(u1, u2, page, total, per_page),
-            )
-        bot.answer_callback_query(call.id)
-
-    # ۴. ارسال تمام عکس‌ها، فیلم‌ها و ویس‌های بین دو کاربر
-    elif data.startswith("adm_media:"):
-        parts = data.split(":")
-        u1 = int(parts[1])
-        u2 = int(parts[2])
-
-        media_list = db.get_media_between(u1, u2, limit=50)
-        if not media_list:
-            bot.answer_callback_query(
-                call.id, "📭 هیچ عکس، فیلم یا ویسی بین این دو نفر ارسال نشده است!", show_alert=True
-            )
-            return
-
-        bot.answer_callback_query(call.id, f"در حال ارسال {len(media_list)} فایل مدیا...")
-        send_media_list_to_admin(uid, media_list)
-        bot.send_message(uid, f"✅ تمام {len(media_list)} فایل مدیای بین این دو نفر ارسال شد.")
-
-    # ۵. ارسال تمام عکس‌ها و فیلم‌های یک کاربر خاص
-    elif data.startswith("adm_umedia:"):
-        target_id = int(data.split(":")[1])
-        media_list = db.get_user_all_media(target_id, limit=30)
-        if not media_list:
-            bot.answer_callback_query(
-                call.id, "📭 این کاربر هیچ عکس یا فیلمی ارسال یا دریافت نکرده است!", show_alert=True
-            )
-            return
-
-        bot.answer_callback_query(call.id, f"در حال ارسال {len(media_list)} فایل مدیا...")
-        send_media_list_to_admin(uid, media_list)
-        bot.send_message(uid, "✅ تمام فایل‌های مدیای این کاربر ارسال شد.")
-
-    # ۶. ارسال عکس پروفایل کاربر (با همان سیستم هوشمند عکس تلگرام / دیتابیس / آواتار)
-    elif data.startswith("adm_uphoto:"):
-        target_id = int(data.split(":")[1])
-        target_user = db.get_user(target_id)
-        if not target_user:
-            bot.answer_callback_query(call.id, "کاربر یافت نشد!", show_alert=True)
-            return
-        bot.answer_callback_query(call.id)
-        cap = format_profile_caption(target_user, "🖼 کارت پروفایل کاربر:")
-        send_profile_card_with_photo(uid, target_user, cap)
-
-    # ۷. مسدود / رفع مسدودی کاربر
-    elif data.startswith("adm_toggle_ban:"):
-        parts = data.split(":")
-        target_id = int(parts[1])
-        back_page = int(parts[2])
-        target_user = db.get_user(target_id)
-        if target_user:
-            new_ban = not target_user.get("is_banned", False)
-            db.add_or_update_user(target_id, is_banned=new_ban)
-            if new_ban:
-                db.disconnect_user(target_id)
-            bot.answer_callback_query(
-                call.id,
-                "🚫 کاربر مسدود شد!" if new_ban else "🔓 کاربر رفع مسدودیت شد!",
-                show_alert=True,
-            )
-            target_user = db.get_user(target_id)
-            partners = db.get_user_chat_partners(target_id)
-            bot.edit_message_text(
-                build_admin_user_text(target_user, partners),
-                call.message.chat.id,
-                call.message.message_id,
-                reply_markup=kb.admin_user_detail_inline(target_user, partners, back_page),
-            )
-
-    # ۸. قطع چت فعال کاربر توسط ادمین
-    elif data.startswith("adm_kick:"):
-        parts = data.split(":")
-        target_id = int(parts[1])
-        back_page = int(parts[2])
-        partner_id = db.disconnect_user(target_id)
-        for u in (target_id, partner_id):
-            if u:
-                db.set_user_state(u, "main_menu")
-                try:
-                    bot.send_message(
-                        u, "🛑 مکالمه توسط مدیریت قطع شد.", reply_markup=get_main_kb(u)
-                    )
-                except Exception:
-                    pass
-        bot.answer_callback_query(call.id, "مکالمه قطع شد ✅", show_alert=True)
-        target_user = db.get_user(target_id)
-        partners = db.get_user_chat_partners(target_id)
-        bot.edit_message_text(
-            build_admin_user_text(target_user, partners),
-            call.message.chat.id,
-            call.message.message_id,
-            reply_markup=kb.admin_user_detail_inline(target_user, partners, back_page),
-        )
-
-
-@bot.message_handler(
-    content_types=["text", "photo", "video", "voice", "audio", "document"],
-    func=lambda msg: is_admin(msg.chat.id)
-    and USER_CONTEXT.get(msg.chat.id)
-    in [
-        "admin_waiting_search",
-        "admin_waiting_broadcast",
-    ]
-    and msg.text != "❌ انصراف",
-)
-def handle_admin_inputs(message):
-    admin_id = message.chat.id
-    mode = USER_CONTEXT.pop(admin_id, None)
-
-    if mode == "admin_waiting_search":
-        txt = (message.text or "").strip().replace("/", "")
-        target = db.get_user_by_custom_id(txt)
-        if not target:
-            bot.send_message(
-                admin_id,
-                "❌ کاربری با این شناسه یافت نشد.",
-                reply_markup=kb.admin_reply_keyboard(),
-            )
-            return
-        partners = db.get_user_chat_partners(target["user_id"])
-        bot.send_message(
-            admin_id, "✅ کاربر پیدا شد:", reply_markup=kb.admin_reply_keyboard()
-        )
-        bot.send_message(
-            admin_id,
-            build_admin_user_text(target, partners),
-            reply_markup=kb.admin_user_detail_inline(target, partners, 0),
-        )
-
-    elif mode == "admin_waiting_broadcast":
-        uids = db.get_all_user_ids()
-        sent = 0
-        bot.send_message(
-            admin_id,
-            f"⏳ در حال ارسال پیام همگانی به {len(uids)} کاربر...",
-            reply_markup=kb.admin_reply_keyboard(),
-        )
-        for u in uids:
-            try:
-                bot.copy_message(u, admin_id, message.message_id)
-                sent += 1
-            except Exception:
-                pass
-        bot.send_message(
-            admin_id, f"✅ پیام همگانی با موفقیت برای {sent} کاربر ارسال شد."
-        )
-
-
-# --- موتور هدایت پیام‌های چت (با فیلتر استیکر، لینک و ذخیره لاگ) ---
+# --- موتور هدایت پیام‌های چت + پاسخ «متوجه نشدم» برای پیام‌های خارج از دستور ---
 @bot.message_handler(
     content_types=[
         "text",
@@ -1463,7 +1221,9 @@ def handle_admin_inputs(message):
 def relay_all_chat_messages(message):
     user_id = message.chat.id
     user = db.get_user(user_id)
+
     if not user or user.get("status") != "chatting" or not user.get("partner_id"):
+        bot.send_message(user_id, "متوجه نشدم")
         return
 
     partner_id = user["partner_id"]
