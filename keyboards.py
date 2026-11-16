@@ -1,3 +1,4 @@
+import math
 from telebot import types
 
 # بانک کامل ۳۱ استان و شهرهای ایران
@@ -482,7 +483,7 @@ IRAN_PROVINCES = {
 
 
 # ۱. منوی اصلی پایین صفحه
-def main_menu_keyboard():
+def main_menu_keyboard(is_admin=False):
     markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
     markup.row(types.KeyboardButton("⚡ به یه ناشناس وصلم کن!"))
     markup.row(
@@ -490,6 +491,8 @@ def main_menu_keyboard():
         types.KeyboardButton("👤 پروفایل من"),
     )
     markup.row(types.KeyboardButton("👥 دعوت از دوستان"))
+    if is_admin:
+        markup.row(types.KeyboardButton("🎛 پنل مدیریت ادمین"))
     return markup
 
 
@@ -615,13 +618,13 @@ def specific_ages_keyboard(start_age, end_age):
     return markup
 
 
-# ۱۰. کیبورد کامل ۳۱ استان ایران (۳ ستونی تمیز)
+# ۱۰. کیبورد کامل ۳۱ استان ایران (۳ ستونی بدون کلمه اضافه استان)
 def provinces_keyboard():
     markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
     provs = sorted(list(IRAN_PROVINCES.keys()))
     row = []
     for p in provs:
-        row.append(types.KeyboardButton(f"استان {p}"))
+        row.append(types.KeyboardButton(p))
         if len(row) == 3:
             markup.row(*row)
             row = []
@@ -655,3 +658,137 @@ def photo_choice_keyboard():
     markup.row(types.KeyboardButton("🚫 بدون عکس (آواتار پیش‌فرض)"))
     markup.row(types.KeyboardButton("🔙 بازگشت"))
     return markup
+
+
+# ==================== ۱۳. کیبوردهای پنل مدیریت ادمین ====================
+
+def admin_reply_keyboard():
+    """کیبورد پایین صفحه مخصوص ادمین"""
+    markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
+    markup.row(
+        types.KeyboardButton("👥 لیست تمام کاربران"),
+        types.KeyboardButton("🟢 چت‌های زنده الان"),
+    )
+    markup.row(
+        types.KeyboardButton("📊 آمار زنده ربات"),
+        types.KeyboardButton("🔍 جستجوی کاربر"),
+    )
+    markup.row(
+        types.KeyboardButton("📢 پیام همگانی"),
+        types.KeyboardButton("🚫 لیست مسدودها"),
+    )
+    markup.row(types.KeyboardButton("🏠 خروج از پنل مدیریت"))
+    return markup
+
+
+def admin_cancel_keyboard():
+    markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
+    markup.row(types.KeyboardButton("❌ انصراف"))
+    return markup
+
+
+def admin_home_inline():
+    kb = types.InlineKeyboardMarkup(row_width=2)
+    kb.add(types.InlineKeyboardButton("👥 لیست تمام کاربران (چت‌ها و مدیا)", callback_data="adm_users:0"))
+    kb.add(
+        types.InlineKeyboardButton("🟢 چت‌های زنده الان", callback_data="adm_live"),
+        types.InlineKeyboardButton("📊 آمار زنده ربات", callback_data="adm_stats"),
+    )
+    kb.add(
+        types.InlineKeyboardButton("🔍 جستجوی کاربر", callback_data="adm_search"),
+        types.InlineKeyboardButton("🚫 لیست مسدودها", callback_data="adm_banned"),
+    )
+    kb.add(types.InlineKeyboardButton("📢 ارسال پیام همگانی", callback_data="adm_broadcast"))
+    return kb
+
+
+def admin_users_list_inline(users, total, page, per_page=10):
+    kb = types.InlineKeyboardMarkup(row_width=1)
+    total_pages = max(1, math.ceil(total / per_page))
+
+    for u in users:
+        g_icon = "👦" if u.get("gender") == "پسر" else ("👧" if u.get("gender") == "دختر" else "👤")
+        st_icon = "🟢" if u.get("status") == "chatting" else ("🔎" if u.get("status") == "waiting" else "⚪️")
+        ban_icon = "🚫" if u.get("is_banned") else ""
+        name = (u.get("name") or "ناشناس")[:14]
+        p_cnt = u.get("partners_count", 0)
+        m_cnt = u.get("msg_count", 0)
+
+        btn_text = f"{st_icon}{ban_icon} {g_icon} {name} | 👥 {p_cnt} مخاطب | 💬 {m_cnt} پیام"
+        kb.add(types.InlineKeyboardButton(btn_text, callback_data=f"adm_u:{u['user_id']}:{page}"))
+
+    nav = []
+    if page > 0:
+        nav.append(types.InlineKeyboardButton("⬅️ قبلی", callback_data=f"adm_users:{page - 1}"))
+    nav.append(types.InlineKeyboardButton(f"📄 {page + 1}/{total_pages}", callback_data="noop"))
+    if (page + 1) * per_page < total:
+        nav.append(types.InlineKeyboardButton("بعدی ➡️", callback_data=f"adm_users:{page + 1}"))
+
+    kb.row(*nav)
+    kb.add(types.InlineKeyboardButton("🔙 منوی اصلی پنل", callback_data="adm_home"))
+    return kb
+
+
+def admin_user_detail_inline(user, partners, back_page=0):
+    kb = types.InlineKeyboardMarkup(row_width=2)
+    uid = user["user_id"]
+
+    kb.add(
+        types.InlineKeyboardButton("🖼 عکس پروفایل", callback_data=f"adm_uphoto:{uid}"),
+        types.InlineKeyboardButton("📂 کل عکس و فیلم‌هایش", callback_data=f"adm_umedia:{uid}"),
+    )
+
+    ban_btn = types.InlineKeyboardButton(
+        "🔓 رفع مسدودی" if user.get("is_banned") else "🚫 مسدود کردن",
+        callback_data=f"adm_toggle_ban:{uid}:{back_page}",
+    )
+    kb.add(ban_btn)
+
+    if user.get("status") == "chatting" and user.get("partner_id"):
+        pid = user["partner_id"]
+        kb.add(
+            types.InlineKeyboardButton("🟢 مشاهده چت الان", callback_data=f"adm_chat:{uid}:{pid}:0"),
+            types.InlineKeyboardButton("✂️ قطع چت الان", callback_data=f"adm_kick:{uid}:{back_page}"),
+        )
+
+    if partners:
+        kb.add(types.InlineKeyboardButton("👇 با این افراد چت کرده (بزن روش تا چت و مدیا بیاد) 👇", callback_data="noop"))
+        for p in partners[:20]:
+            p_id = p["partner_id"]
+            p_name = (p.get("name") or "ناشناس")[:14]
+            p_cid = p.get("custom_id") or p_id
+            total_m = p.get("total_messages", 0)
+            media_m = p.get("media_count", 0)
+
+            label = f"💬 با {p_name} ({p_cid}) ⬅️ {total_m} پیام | 🎬 {media_m} مدیا"
+            kb.add(types.InlineKeyboardButton(label, callback_data=f"adm_chat:{uid}:{p_id}:0"))
+    else:
+        kb.add(types.InlineKeyboardButton("📭 هنوز با هیچ‌کس چت نکرده است", callback_data="noop"))
+
+    kb.add(types.InlineKeyboardButton("🔙 بازگشت به لیست کاربران", callback_data=f"adm_users:{back_page}"))
+    return kb
+
+
+def admin_conversation_inline(u1, u2, page, total, per_page=15):
+    kb = types.InlineKeyboardMarkup(row_width=2)
+    total_pages = max(1, math.ceil(total / per_page))
+
+    kb.add(
+        types.InlineKeyboardButton("🎬 ارسال تمام عکس‌ها، فیلم‌ها و ویس‌های این چت", callback_data=f"adm_media:{u1}:{u2}")
+    )
+
+    nav = []
+    if page > 0:
+        nav.append(types.InlineKeyboardButton("⬅️ پیام‌های جدیدتر", callback_data=f"adm_chat:{u1}:{u2}:{page - 1}"))
+    nav.append(types.InlineKeyboardButton(f"📄 صفحه {page + 1}/{total_pages}", callback_data="noop"))
+    if (page + 1) * per_page < total:
+        nav.append(types.InlineKeyboardButton("پیام‌های قدیمی‌تر ➡️", callback_data=f"adm_chat:{u1}:{u2}:{page + 1}"))
+    kb.row(*nav)
+
+    kb.add(
+        types.InlineKeyboardButton("🔙 پروفایل نفر اول", callback_data=f"adm_u:{u1}:0"),
+        types.InlineKeyboardButton("🔙 پروفایل نفر دوم", callback_data=f"adm_u:{u2}:0"),
+    )
+    kb.add(types.InlineKeyboardButton("🔄 رفرش چت", callback_data=f"adm_chat:{u1}:{u2}:{page}"))
+    kb.add(types.InlineKeyboardButton("👥 لیست کل کاربران", callback_data="adm_users:0"))
+    return kb

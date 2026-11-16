@@ -9,7 +9,7 @@ from psycopg2.extras import RealDictCursor
 load_dotenv()
 DATABASE_URL = os.getenv("DATABASE_URL")
 
-# ایجاد استخر اتصال (Connection Pool) برای سرعت فوق‌العاده بالا و حذف تاخیر
+# ایجاد استخر اتصال (Connection Pool) برای سرعت بالا و حذف تاخیر
 db_pool = psycopg2.pool.ThreadedConnectionPool(1, 20, DATABASE_URL)
 
 
@@ -111,7 +111,8 @@ def get_user_by_custom_id(custom_id):
     try:
         cur = conn.cursor(cursor_factory=RealDictCursor)
         cur.execute(
-            "SELECT * FROM anon_users WHERE custom_id = %s;", (custom_id,)
+            "SELECT * FROM anon_users WHERE custom_id = %s OR user_id::text = %s;", 
+            (custom_id, custom_id.strip())
         )
         user = cur.fetchone()
         cur.close()
@@ -175,7 +176,6 @@ def set_user_state(user_id, new_state):
 
 
 def like_user(liker_id, liked_id):
-    """ثبت لایک جدید؛ اگر قبلاً لایک کرده باشد False برمی‌گرداند"""
     if liker_id == liked_id:
         return False
     conn = get_conn()
@@ -205,7 +205,6 @@ def like_user(liker_id, liked_id):
 
 
 def find_match(user_id, filter_type="any"):
-    """پیدا کردن هم‌صحبت بر اساس فیلتر انتخابی"""
     user = get_user(user_id)
     if not user:
         return None
@@ -359,7 +358,7 @@ def search_users_list(mode, user):
             """,
                 (uid,),
             )
-        else:  # new_users
+        else:
             cur.execute(
                 """
                 SELECT *, (last_seen >= NOW() - INTERVAL '15 minutes') AS is_online
@@ -385,6 +384,194 @@ def get_all_user_ids():
         ids = [r[0] for r in cur.fetchall()]
         cur.close()
         return ids
+    finally:
+        put_conn(conn)
+
+
+# ==================== توابع پیشرفته پنل مدیریت ====================
+
+def get_bot_stats():
+    conn = get_conn()
+    try:
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        cur.execute("SELECT COUNT(*) AS total FROM anon_users;")
+        total_users = cur.fetchone()["total"]
+
+        cur.execute("SELECT COUNT(*) AS chatting FROM anon_users WHERE status = 'chatting';")
+        chatting_users = cur.fetchone()["chatting"]
+
+        cur.execute("SELECT COUNT(*) AS waiting FROM anon_users WHERE status = 'waiting';")
+        waiting_users = cur.fetchone()["waiting"]
+
+        cur.execute("SELECT COUNT(*) AS banned FROM anon_users WHERE is_banned = TRUE;")
+        banned_users = cur.fetchone()["banned"]
+
+        cur.execute("SELECT COUNT(*) AS total_msgs FROM chat_logs;")
+        total_msgs = cur.fetchone()["total_msgs"]
+
+        cur.execute("SELECT COUNT(*) AS total_media FROM chat_logs WHERE content_type != 'text';")
+        total_media = cur.fetchone()["total_media"]
+
+        cur.close()
+        return {
+            "total_users": total_users,
+            "chatting_users": chatting_users,
+            "waiting_users": waiting_users,
+            "banned_users": banned_users,
+            "total_msgs": total_msgs,
+            "total_media": total_media
+        }
+    finally:
+        put_conn(conn)
+
+
+def get_paginated_users(limit=10, offset=0):
+    conn = get_conn()
+    try:
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        cur.execute("SELECT COUNT(*) AS cnt FROM anon_users;")
+        total = cur.fetchone()["cnt"]
+
+        cur.execute("""
+            SELECT u.*,
+                   (SELECT COUNT(DISTINCT CASE WHEN m.sender_id = u.user_id THEN m.receiver_id ELSE m.sender_id END)
+                    FROM chat_logs m WHERE m.sender_id = u.user_id OR m.receiver_id = u.user_id) AS partners_count,
+                   (SELECT COUNT(*) FROM chat_logs m WHERE m.sender_id = u.user_id OR m.receiver_id = u.user_id) AS msg_count
+            FROM anon_users u
+            ORDER BY u.last_seen DESC NULLS LAST
+            LIMIT %s OFFSET %s;
+        """, (limit, offset))
+        rows = cur.fetchall()
+        cur.close()
+        return rows, total
+    finally:
+        put_conn(conn)
+
+
+def get_user_chat_partners(user_id):
+    conn = get_conn()
+    try:
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        cur.execute("""
+            SELECT 
+                m.other_id AS partner_id,
+                COALESCE(u.name, 'کاربر ناشناس') AS name,
+                COALESCE(u.custom_id, CAST(m.other_id AS TEXT)) AS custom_id,
+                u.gender,
+                COUNT(m.id) AS total_messages,
+                COUNT(CASE WHEN m.content_type != 'text' THEN 1 END) AS media_count,
+                MAX(m.created_at) AS last_chat_time
+            FROM (
+                SELECT 
+                    id,
+                    CASE WHEN sender_id = %s THEN receiver_id ELSE sender_id END AS other_id,
+                    content_type,
+                    created_at
+                FROM chat_logs
+                WHERE sender_id = %s OR receiver_id = %s
+            ) m
+            LEFT JOIN anon_users u ON u.user_id = m.other_id
+            GROUP BY m.other_id, u.name, u.custom_id, u.gender
+            ORDER BY last_chat_time DESC;
+        """, (user_id, user_id, user_id))
+        rows = cur.fetchall()
+        cur.close()
+        return rows
+    finally:
+        put_conn(conn)
+
+
+def get_conversation_between(u1, u2, limit=15, offset=0):
+    conn = get_conn()
+    try:
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        cur.execute("""
+            SELECT COUNT(*) AS cnt FROM chat_logs
+            WHERE (sender_id = %s AND receiver_id = %s)
+               OR (sender_id = %s AND receiver_id = %s);
+        """, (u1, u2, u2, u1))
+        total = cur.fetchone()["cnt"]
+
+        cur.execute("""
+            SELECT * FROM chat_logs
+            WHERE (sender_id = %s AND receiver_id = %s)
+               OR (sender_id = %s AND receiver_id = %s)
+            ORDER BY created_at DESC
+            LIMIT %s OFFSET %s;
+        """, (u1, u2, u2, u1, limit, offset))
+        rows = cur.fetchall()
+        rows.reverse()
+        cur.close()
+        return rows, total
+    finally:
+        put_conn(conn)
+
+
+def get_media_between(u1, u2, limit=50):
+    conn = get_conn()
+    try:
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        cur.execute("""
+            SELECT * FROM chat_logs
+            WHERE ((sender_id = %s AND receiver_id = %s)
+               OR (sender_id = %s AND receiver_id = %s))
+              AND content_type != 'text'
+              AND content IS NOT NULL
+            ORDER BY created_at ASC
+            LIMIT %s;
+        """, (u1, u2, u2, u1, limit))
+        rows = cur.fetchall()
+        cur.close()
+        return rows
+    finally:
+        put_conn(conn)
+
+
+def get_user_all_media(user_id, limit=30):
+    conn = get_conn()
+    try:
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        cur.execute("""
+            SELECT * FROM chat_logs
+            WHERE (sender_id = %s OR receiver_id = %s)
+              AND content_type != 'text'
+              AND content IS NOT NULL
+            ORDER BY created_at DESC
+            LIMIT %s;
+        """, (user_id, user_id, limit))
+        rows = cur.fetchall()
+        cur.close()
+        return rows
+    finally:
+        put_conn(conn)
+
+
+def get_active_chats():
+    conn = get_conn()
+    try:
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        cur.execute("""
+            SELECT u1.user_id AS u1_id, u1.name AS u1_name, u1.custom_id AS u1_pub,
+                   u2.user_id AS u2_id, u2.name AS u2_name, u2.custom_id AS u2_pub
+            FROM anon_users u1
+            JOIN anon_users u2 ON u1.partner_id = u2.user_id
+            WHERE u1.status = 'chatting' AND u1.user_id < u2.user_id;
+        """)
+        rows = cur.fetchall()
+        cur.close()
+        return rows
+    finally:
+        put_conn(conn)
+
+
+def get_banned_users():
+    conn = get_conn()
+    try:
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        cur.execute("SELECT * FROM anon_users WHERE is_banned = TRUE ORDER BY last_seen DESC LIMIT 30;")
+        rows = cur.fetchall()
+        cur.close()
+        return rows
     finally:
         put_conn(conn)
 
