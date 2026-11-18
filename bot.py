@@ -182,7 +182,7 @@ def contains_links_or_usernames(text):
 
 
 def send_profile_card_with_photo(
-    receiver_id, target_user, caption, reply_markup=None
+    receiver_id, target_user, caption, reply_markup=None, protect=False
 ):
     fid = target_user.get("photo_file_id")
 
@@ -202,7 +202,11 @@ def send_profile_card_with_photo(
     if fid and fid != "NO_PHOTO":
         try:
             bot.send_photo(
-                receiver_id, fid, caption=caption, reply_markup=reply_markup
+                receiver_id,
+                fid,
+                caption=caption,
+                reply_markup=reply_markup,
+                protect_content=protect,
             )
             return
         except Exception:
@@ -215,10 +219,19 @@ def send_profile_card_with_photo(
     )
     try:
         bot.send_photo(
-            receiver_id, avatar_url, caption=caption, reply_markup=reply_markup
+            receiver_id,
+            avatar_url,
+            caption=caption,
+            reply_markup=reply_markup,
+            protect_content=protect,
         )
     except Exception:
-        bot.send_message(receiver_id, caption, reply_markup=reply_markup)
+        bot.send_message(
+            receiver_id,
+            caption,
+            reply_markup=reply_markup,
+            protect_content=protect,
+        )
 
 
 def format_profile_caption(u, title="👤 مشخصات حساب شما:"):
@@ -375,6 +388,7 @@ def dispatch_luxury_admin_invite(admin_id, target_id, custom_note=None):
             luxury_text,
             parse_mode="HTML",
             reply_markup=markup,
+            protect_content=True,
         )
         bot.send_message(
             admin_id,
@@ -420,7 +434,6 @@ def handle_user_admin_invite_response(call):
     if call.data.startswith("accept_admin_chat_"):
         admin_id = int(call.data.replace("accept_admin_chat_", ""))
 
-        # اگر کاربر یا مدیر در حال چت دیگری بودند، چت قبلی را قطع می‌کنیم
         u_curr = db.get_user(uid)
         if u_curr and u_curr.get("status") == "chatting":
             old_p = db.disconnect_user(uid)
@@ -451,7 +464,8 @@ def handle_user_admin_invite_response(call):
 
         bot.send_message(
             uid,
-            "✨ گفتگو با مدیریت برقرار شد! می‌توانید پیام خود را ارسال کنید 👇",
+            "✨ گفتگو با مدیریت برقرار شد! می‌توانید پیام خود را ارسال کنید 👇\n"
+            "🔒 (حالت محافظت محتوا فعال است؛ امکان اسکرین‌شات و فوروارد وجود ندارد)",
             reply_markup=kb.chatting_keyboard(),
         )
         bot.send_message(
@@ -608,7 +622,7 @@ def exit_admin_panel(message):
     send_main_menu_with_link(uid)
 
 
-# --- بخش جدید: چت با کاربران (انتخاب دختر یا پسر -> نمایش پروفایل -> دعوت‌نامه لوکس) ---
+# --- بخش جدید: چت با کاربران ---
 @bot.message_handler(
     func=lambda msg: is_admin(msg.chat.id)
     and msg.text in ["💬 چت با کاربران", "🔙 بازگشت به انتخاب جنسیت"]
@@ -1409,7 +1423,10 @@ def start_filtered_search(message):
     partner_id = db.find_match(user_id, chosen_filter)
 
     if partner_id:
-        msg_text = "🎉 هم‌صحبت پیدا شد و وصل شدید! سلام کن 👋"
+        msg_text = (
+            "🎉 هم‌صحبت پیدا شد و وصل شدید! سلام کن 👋\n"
+            "🔒 (حالت ضداسکرین‌شات و ضدذخیره فعال است)"
+        )
         bot.send_message(
             user_id, msg_text + quota_note, reply_markup=kb.chatting_keyboard()
         )
@@ -1500,7 +1517,7 @@ def view_partner_profile(message):
         pass
 
     caption = format_profile_caption(partner, "👤 پروفایل هم‌صحبت شما:")
-    send_profile_card_with_photo(user_id, partner, caption)
+    send_profile_card_with_photo(user_id, partner, caption, protect=True)
 
 
 @bot.message_handler(func=lambda msg: msg.text == "🔗 اشتراک‌گذاری آیدی")
@@ -1580,16 +1597,29 @@ def prompt_timed_photo(message):
     USER_CONTEXT[user_id] = "waiting_for_timed_photo"
     bot.send_message(
         user_id,
-        "💣 اکنون عکس خود را بفرستید تا به صورت محوشونده (۱۰ ثانیه‌ای) ارسال شود:",
+        "💣 اکنون عکس خود را بفرستید تا به صورت محوشونده و ضداسکرین‌شات (۱۰ ثانیه‌ای) ارسال شود:",
     )
 
 
-def delete_timed_message(chat_id, message_id, delay=10):
+def delete_timed_messages_both_sides(
+    sender_chat_id,
+    sender_msg_id,
+    receiver_chat_id,
+    receiver_msg_id,
+    notice_msg_id=None,
+    delay=10,
+):
     time.sleep(delay)
-    try:
-        bot.delete_message(chat_id, message_id)
-    except Exception:
-        pass
+    for cid, mid in [
+        (receiver_chat_id, receiver_msg_id),
+        (sender_chat_id, sender_msg_id),
+        (sender_chat_id, notice_msg_id),
+    ]:
+        if cid and mid:
+            try:
+                bot.delete_message(cid, mid)
+            except Exception:
+                pass
 
 
 # --- گزارش تخلف (ارسال هشدار مسدودسازی به مدیر پس از رسیدن به ۴ گزارش) ---
@@ -1642,7 +1672,7 @@ def report_partner(message):
             pass
 
 
-# --- موتور هدایت پیام‌های چت + چک کانال + پاسخ «متوجه نشدم» ---
+# --- موتور هدایت پیام‌های چت (با قفل کامل ضداسکرین‌شات و ضدذخیره روی تمام پیام‌ها و مدیاها) ---
 @bot.message_handler(
     content_types=[
         "text",
@@ -1683,7 +1713,7 @@ def relay_all_chat_messages(message):
             )
             return
         db.log_chat_message(user_id, partner_id, "text", message.text)
-        bot.send_message(partner_id, message.text)
+        bot.send_message(partner_id, message.text, protect_content=True)
         return
 
     if message.content_type == "photo":
@@ -1701,16 +1731,25 @@ def relay_all_chat_messages(message):
             sent_msg = bot.send_photo(
                 partner_id,
                 fid,
-                caption="💣 عکس تایم‌دار (۱۰ ثانیه دیگر خودکار حذف می‌شود)\n"
+                caption="💣 عکس تایم‌دار محافظت‌شده (۱۰ ثانیه دیگر خودکار حذف می‌شود)\n"
                 + cap,
                 has_spoiler=True,
+                protect_content=True,
             )
-            bot.send_message(
-                user_id, "✅ عکس تایم‌دار ارسال شد (۱۰ ثانیه بعد پاک می‌شود)."
+            notice = bot.send_message(
+                user_id,
+                "✅ عکس تایم‌دار ارسال شد (۱۰ ثانیه بعد از صفحه هر دو نفر پاک می‌شود).",
             )
             threading.Thread(
-                target=delete_timed_message,
-                args=(partner_id, sent_msg.message_id, 10),
+                target=delete_timed_messages_both_sides,
+                args=(
+                    user_id,
+                    message.message_id,
+                    partner_id,
+                    sent_msg.message_id,
+                    notice.message_id,
+                    10,
+                ),
                 daemon=True,
             ).start()
             return
@@ -1718,12 +1757,14 @@ def relay_all_chat_messages(message):
         db.log_chat_message(
             user_id, partner_id, "photo", fid, caption=cap, is_timed=False
         )
-        bot.send_photo(partner_id, fid, caption=cap)
+        bot.send_photo(partner_id, fid, caption=cap, protect_content=True)
         return
 
     if message.content_type == "voice":
         db.log_chat_message(user_id, partner_id, "voice", message.voice.file_id)
-        bot.send_voice(partner_id, message.voice.file_id)
+        bot.send_voice(
+            partner_id, message.voice.file_id, protect_content=True
+        )
     elif message.content_type == "video":
         db.log_chat_message(
             user_id,
@@ -1733,7 +1774,10 @@ def relay_all_chat_messages(message):
             caption=message.caption,
         )
         bot.send_video(
-            partner_id, message.video.file_id, caption=message.caption or ""
+            partner_id,
+            message.video.file_id,
+            caption=message.caption or "",
+            protect_content=True,
         )
     elif message.content_type == "audio":
         db.log_chat_message(
@@ -1744,7 +1788,10 @@ def relay_all_chat_messages(message):
             caption=message.caption,
         )
         bot.send_audio(
-            partner_id, message.audio.file_id, caption=message.caption or ""
+            partner_id,
+            message.audio.file_id,
+            caption=message.caption or "",
+            protect_content=True,
         )
     elif message.content_type == "document":
         db.log_chat_message(
@@ -1755,7 +1802,10 @@ def relay_all_chat_messages(message):
             caption=message.caption,
         )
         bot.send_document(
-            partner_id, message.document.file_id, caption=message.caption or ""
+            partner_id,
+            message.document.file_id,
+            caption=message.caption or "",
+            protect_content=True,
         )
 
 
