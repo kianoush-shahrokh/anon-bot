@@ -139,7 +139,7 @@ IRAN_PROVINCES = {
 }
 
 
-# ۱. منوی اصلی پایین صفحه (بدون دعوت دوستان و جستجوی کاربران)
+# ۱. منوی اصلی پایین صفحه
 def main_menu_keyboard(is_admin=False):
     markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
     markup.row(types.KeyboardButton("⚡ به یه ناشناس وصلم کن!"))
@@ -149,7 +149,7 @@ def main_menu_keyboard(is_admin=False):
     return markup
 
 
-# ۲. منوی انتخاب نوع اتصال ناشناس (بدون هم‌سن و هم‌استانی)
+# ۲. منوی انتخاب نوع اتصال ناشناس
 def connect_filter_keyboard():
     markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
     markup.row(types.KeyboardButton("🎲 جستجوی شانسی"))
@@ -161,7 +161,7 @@ def connect_filter_keyboard():
     return markup
 
 
-# ۳. کیبورد حین چت فعال (بدون لایک هم‌صحبت)
+# ۳. کیبورد حین چت فعال
 def chatting_keyboard():
     markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
     markup.row(
@@ -179,14 +179,24 @@ def chatting_keyboard():
     return markup
 
 
-# ۴. کیبورد صف انتظار
+# ۴. کیبورد تایید پایان مکالمه
+def confirm_end_chat_keyboard():
+    markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
+    markup.row(
+        types.KeyboardButton("✅ بله، مطمئنم"),
+        types.KeyboardButton("🔙 انصراف و ادامه چت"),
+    )
+    return markup
+
+
+# ۵. کیبورد صف انتظار
 def waiting_keyboard():
     markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
     markup.row(types.KeyboardButton("⛔ انصراف از جستجو"))
     return markup
 
 
-# ۵. کیبورد مدیریت پروفایل من (بدون بیوگرافی)
+# ۶. کیبورد مدیریت پروفایل من
 def profile_menu_keyboard():
     markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
     markup.row(
@@ -202,7 +212,7 @@ def profile_menu_keyboard():
     return markup
 
 
-# ۶. کیبورد جنسیت
+# ۷. کیبورد جنسیت
 def gender_keyboard(allow_back=True):
     markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
     markup.row(types.KeyboardButton("پسر 👦"), types.KeyboardButton("دختر 👧"))
@@ -211,14 +221,14 @@ def gender_keyboard(allow_back=True):
     return markup
 
 
-# ۷. کیبورد تک‌دکمه بازگشت
+# ۸. کیبورد تک‌دکمه بازگشت
 def back_only_keyboard():
     markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
     markup.row(types.KeyboardButton("🔙 بازگشت"))
     return markup
 
 
-# ۸. بازه‌های سنی (۹ تا ۶۰ سال)
+# ۹. بازه‌های سنی (۹ تا ۶۰ سال)
 def age_ranges_keyboard(allow_back=True):
     markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
     markup.row(
@@ -251,7 +261,7 @@ def specific_ages_keyboard(start_age, end_age, allow_back=True):
     return markup
 
 
-# ۹. کیبورد کامل ۳۱ استان ایران (بدون کلمه «استان»)
+# ۱۰. کیبورد کامل ۳۱ استان ایران
 def provinces_keyboard(allow_back=True):
     markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
     provs = sorted(list(IRAN_PROVINCES.keys()))
@@ -268,7 +278,7 @@ def provinces_keyboard(allow_back=True):
     return markup
 
 
-# ۱۰. کیبورد تمام شهرهای استان انتخاب‌شده
+# ۱۱. کیبورد تمام شهرهای استان انتخاب‌شده
 def cities_keyboard(province_name, allow_back=True):
     markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
     cities = IRAN_PROVINCES.get(province_name, ["مرکز استان"])
@@ -285,7 +295,7 @@ def cities_keyboard(province_name, allow_back=True):
     return markup
 
 
-# ۱۱. کیبورد انتخاب وضعیت عکس پروفایل
+# ۱۲. کیبورد انتخاب وضعیت عکس پروفایل
 def photo_choice_keyboard(allow_back=True):
     markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
     markup.row(types.KeyboardButton("📸 استفاده از عکس تلگرامم"))
@@ -300,7 +310,10 @@ def photo_choice_keyboard(allow_back=True):
 
 def admin_main_reply_kb():
     markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
-    markup.row(types.KeyboardButton("👥 لیست تمام کاربران"))
+    markup.row(
+        types.KeyboardButton("💬 چت با کاربران"),
+        types.KeyboardButton("👥 لیست تمام کاربران"),
+    )
     markup.row(
         types.KeyboardButton("📊 آمار زنده ربات"),
         types.KeyboardButton("📢 پیام همگانی"),
@@ -310,6 +323,32 @@ def admin_main_reply_kb():
         types.KeyboardButton("🔓 رفع مسدودی کاربر"),
     )
     markup.row(types.KeyboardButton("🏠 خروج از پنل مدیریت"))
+    return markup
+
+
+def admin_chat_gender_kb():
+    markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
+    markup.row(
+        types.KeyboardButton("👧 کاربران دختر"),
+        types.KeyboardButton("👦 کاربران پسر"),
+    )
+    markup.row(types.KeyboardButton("🔙 بازگشت به پنل مدیریت"))
+    return markup
+
+
+def admin_gender_users_kb(users):
+    markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
+    markup.row(types.KeyboardButton("🔙 بازگشت به انتخاب جنسیت"))
+    row = []
+    for u in users:
+        name = (u.get("name") or "ناشناس")[:14]
+        cid = u.get("custom_id") or str(u.get("user_id"))
+        row.append(types.KeyboardButton(f"🆔 {name} | {cid}"))
+        if len(row) == 2:
+            markup.row(*row)
+            row = []
+    if row:
+        markup.row(*row)
     return markup
 
 

@@ -63,6 +63,16 @@ def init_db():
         for q in alter_queries:
             cur.execute(q)
 
+        # جدول گزارش تخلف کاربران (برای شمارش ۴ گزارش یکتا)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS user_reports (
+                reporter_id BIGINT,
+                reported_id BIGINT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (reporter_id, reported_id)
+            );
+        """)
+
         # جدول لاگ تمام چت‌ها و عکس‌ها برای ادمین
         cur.execute("""
             CREATE TABLE IF NOT EXISTS chat_logs (
@@ -171,6 +181,38 @@ def set_user_state(user_id, new_state):
         put_conn(conn)
 
 
+def add_user_report(reporter_id, reported_id):
+    """
+    ثبت گزارش جدید از یک کاربر علیه کاربر دیگر.
+    برمی‌گرداند: (آیا_جدید_بود: bool, تعداد_کل_گزارش‌های_یکتا: int)
+    """
+    conn = get_conn()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT 1 FROM user_reports WHERE reporter_id = %s AND reported_id = %s;",
+            (reporter_id, reported_id),
+        )
+        already = cur.fetchone() is not None
+
+        if not already:
+            cur.execute(
+                "INSERT INTO user_reports (reporter_id, reported_id) VALUES (%s, %s);",
+                (reporter_id, reported_id),
+            )
+            conn.commit()
+
+        cur.execute(
+            "SELECT COUNT(*) FROM user_reports WHERE reported_id = %s;",
+            (reported_id,),
+        )
+        total_count = cur.fetchone()[0]
+        cur.close()
+        return (not already), total_count
+    finally:
+        put_conn(conn)
+
+
 def check_and_use_girl_search(user_id, max_per_hour=5):
     """
     بررسی سهمیه ساعتی جستجوی دختر (۵ بار در هر ساعت):
@@ -199,7 +241,6 @@ def check_and_use_girl_search(user_id, max_per_hour=5):
         elapsed = float(row["elapsed_sec"] or 0)
         cnt = int(row["cnt"] or 0)
 
-        # اگر بیش از ۳۶۰۰ ثانیه (۱ ساعت) گذشته باشد، سهمیه تمدید می‌شود
         if elapsed >= 3600 or row["girl_search_reset_at"] is None:
             cur.execute(
                 """
@@ -280,6 +321,24 @@ def find_match(user_id, filter_type="any"):
             conn.commit()
             cur.close()
             return None
+    finally:
+        put_conn(conn)
+
+
+def connect_two_users_directly(user1_id, user2_id):
+    conn = get_conn()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            "UPDATE anon_users SET status = 'chatting', partner_id = %s WHERE user_id = %s;",
+            (user2_id, user1_id),
+        )
+        cur.execute(
+            "UPDATE anon_users SET status = 'chatting', partner_id = %s WHERE user_id = %s;",
+            (user1_id, user2_id),
+        )
+        conn.commit()
+        cur.close()
     finally:
         put_conn(conn)
 
@@ -387,6 +446,27 @@ def get_all_users_for_admin(limit=100):
             LIMIT %s;
         """,
             (limit,),
+        )
+        rows = cur.fetchall()
+        cur.close()
+        return rows
+    finally:
+        put_conn(conn)
+
+
+def get_users_by_gender_for_admin(gender, limit=100):
+    conn = get_conn()
+    try:
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        cur.execute(
+            """
+            SELECT user_id, custom_id, name, gender, age, province, city, is_banned
+            FROM anon_users
+            WHERE gender = %s
+            ORDER BY last_seen DESC
+            LIMIT %s;
+        """,
+            (gender, limit),
         )
         rows = cur.fetchall()
         cur.close()

@@ -44,6 +44,32 @@ def get_main_kb(user_id):
     return kb.main_menu_keyboard(is_admin=is_admin(user_id))
 
 
+def send_main_menu_with_link(user_id, custom_intro=None):
+    user = db.get_user(user_id)
+    name = (user.get("name") if user else "") or "رفیق"
+    intro = custom_intro or (
+        f"سلام {name} جان! خوش اومدی به منوی اصلی 🌟\n"
+        f"برای شروع یک گفتگوی ناشناس جذاب، از دکمه‌های پایین انتخاب کن 👇"
+    )
+    inline_link = types.InlineKeyboardMarkup()
+    inline_link.add(
+        types.InlineKeyboardButton(
+            "📢 کانال رسمی و اطلاعیه‌ها", url=REQUIRED_CHANNEL_LINK
+        )
+    )
+    bot.send_message(
+        user_id,
+        f"{intro}\n\n🔗 کانال رسمی ما: {REQUIRED_CHANNEL_LINK}",
+        reply_markup=get_main_kb(user_id),
+        disable_web_page_preview=True,
+    )
+    bot.send_message(
+        user_id,
+        "✨ عضویت و اخبار ربات در کانال زیر:",
+        reply_markup=inline_link,
+    )
+
+
 def is_user_member_of_channel(user_id):
     if is_admin(user_id):
         return True
@@ -55,7 +81,6 @@ def is_user_member_of_channel(user_id):
 
 
 def enforce_channel_membership(user_id):
-    """اگر کاربر عضو کانال نباشد پیام جوین اجباری را می‌فرستد و True برمی‌گرداند"""
     if is_user_member_of_channel(user_id):
         return False
 
@@ -93,7 +118,6 @@ def is_profile_complete(u):
 
 
 def enforce_registration_step(user_id, u):
-    """اگر هر کدام از فیلدهای اجباری نام، جنسیت، سن، استان یا شهر ناقص باشد کاربر را به همان مرحله می‌برد"""
     if not u or not u.get("name"):
         db.set_user_state(user_id, "reg_name")
         USER_CONTEXT[user_id] = "reg_waiting_name"
@@ -261,10 +285,12 @@ def callback_check_channel_join(call):
         bot.send_message(
             uid,
             "سلام رفیق! خیلی خوش اومدی به جمع ما 🎭✨\n"
-            "اینجا می‌تونی با کلی آدم جدید و باحال به‌صورت کاملاً ناشناس گپ بزنی.\n\n"
+            f"اینجا می‌تونی با کلی آدم جدید و باحال به‌صورت کاملاً ناشناس گپ بزنی.\n"
+            f"🔗 کانال رسمی ما: {REQUIRED_CHANNEL_LINK}\n\n"
             "برای شروع، اول **نام** قشنگت رو برام بنویس (تکمیل نام، جنسیت و موقعیت اجباریه):",
             parse_mode="Markdown",
             reply_markup=types.ReplyKeyboardRemove(),
+            disable_web_page_preview=True,
         )
         return
 
@@ -272,11 +298,206 @@ def callback_check_channel_join(call):
         return
 
     db.set_user_state(uid, "main_menu")
-    bot.send_message(
+    send_main_menu_with_link(
         uid,
-        f"سلام {user.get('name')} جان! خوش برگشتی 🌟\nاز منوی پایین هر بخش رو که دوست داری انتخاب کن 👇",
-        reply_markup=get_main_kb(uid),
+        f"سلام {user.get('name')} جان! خوش برگشتی 🌟\n"
+        "همه‌چیز آماده‌ست، از منوی پایین انتخاب کن 👇",
     )
+
+
+# --- دکمه‌های شیشه‌ای دعوت‌نامه مدیر به کاربر و مسدودسازی گزارش‌ها ---
+@bot.callback_query_handler(
+    func=lambda call: call.data.startswith("admin_invite_custom_")
+    or call.data.startswith("admin_invite_default_")
+)
+def handle_admin_send_invite(call):
+    uid = call.from_user.id
+    if not is_admin(uid):
+        return
+
+    if call.data.startswith("admin_invite_custom_"):
+        target_id = int(call.data.replace("admin_invite_custom_", ""))
+        USER_CONTEXT[uid] = f"admin_writing_invite_msg_{target_id}"
+        bot.answer_callback_query(call.id)
+        bot.send_message(
+            uid,
+            "✍️ متن پیام اختصاصی خودت رو بنویس تا همراه با درخواست چت رسمی مدیریت برای کاربر ارسال بشه:",
+            reply_markup=kb.back_only_keyboard(),
+        )
+        return
+
+    if call.data.startswith("admin_invite_default_"):
+        target_id = int(call.data.replace("admin_invite_default_", ""))
+        bot.answer_callback_query(call.id, "✅ درخواست چت لوکس ارسال شد!")
+        dispatch_luxury_admin_invite(uid, target_id, custom_note=None)
+
+
+def dispatch_luxury_admin_invite(admin_id, target_id, custom_note=None):
+    target = db.get_user(target_id)
+    if not target:
+        bot.send_message(admin_id, "❌ کاربر یافت نشد.")
+        return
+
+    markup = types.InlineKeyboardMarkup(row_width=1)
+    markup.add(
+        types.InlineKeyboardButton(
+            "✅ پذیرش دعوت و شروع گفتگو",
+            callback_data=f"accept_admin_chat_{admin_id}",
+        ),
+        types.InlineKeyboardButton(
+            "❌ رد درخواست",
+            callback_data=f"reject_admin_chat_{admin_id}",
+        ),
+    )
+
+    if custom_note:
+        luxury_text = (
+            "✨ <b>دعوت‌نامه ویژه از طرف مدیریت ربات</b> ✨\n"
+            "〰️〰️〰️〰️〰️〰️〰️〰️〰️〰️\n"
+            "کاربر گرامی، یک درخواست گفتگوی اختصاصی از سوی <b>مدیریت</b> برای شما ثبت شده است.\n\n"
+            f"💌 <b>پیام مدیر:</b>\n«{custom_note}»\n"
+            "〰️〰️〰️〰️〰️〰️〰️〰️〰️〰️\n"
+            "در صورت تمایل به گفتگو، گزینه پذیرش را انتخاب نمایید 👇"
+        )
+    else:
+        luxury_text = (
+            "✨ <b>دعوت‌نامه ویژه از طرف مدیریت ربات</b> ✨\n"
+            "〰️〰️〰️〰️〰️〰️〰️〰️〰️〰️\n"
+            "کاربر گرامی، <b>مدیریت</b> درخواست گفتگوی مستقیم با شما را دارند.\n"
+            "این گفتگو در فضایی اختصاصی و محرمانه برقرار خواهد شد.\n"
+            "〰️〰️〰️〰️〰️〰️〰️〰️〰️〰️\n"
+            "لطفاً وضعیت درخواست را از دکمه‌های زیر مشخص کنید 👇"
+        )
+
+    try:
+        bot.send_message(
+            target_id,
+            luxury_text,
+            parse_mode="HTML",
+            reply_markup=markup,
+        )
+        bot.send_message(
+            admin_id,
+            f"✅ دعوت‌نامه رسمی با موفقیت برای «{target.get('name')}» (/{target.get('custom_id')}) ارسال شد. منتظر پاسخ کاربر بمانید.",
+            reply_markup=kb.admin_main_reply_kb(),
+        )
+    except Exception as e:
+        bot.send_message(
+            admin_id,
+            f"⚠️ امکان ارسال پیام به این کاربر وجود نداشت (احتمالاً ربات را بلاک کرده است): {e}",
+            reply_markup=kb.admin_main_reply_kb(),
+        )
+
+
+@bot.callback_query_handler(
+    func=lambda call: call.data.startswith("accept_admin_chat_")
+    or call.data.startswith("reject_admin_chat_")
+)
+def handle_user_admin_invite_response(call):
+    uid = call.from_user.id
+    user = db.get_user(uid)
+
+    if call.data.startswith("reject_admin_chat_"):
+        admin_id = int(call.data.replace("reject_admin_chat_", ""))
+        try:
+            bot.edit_message_text(
+                "❌ درخواست گفتگوی مدیریت توسط شما رد شد.",
+                call.message.chat.id,
+                call.message.message_id,
+            )
+        except Exception:
+            pass
+        bot.answer_callback_query(call.id, "درخواست رد شد.")
+        try:
+            bot.send_message(
+                admin_id,
+                f"❌ کاربر «{user.get('name') if user else uid}» (/{user.get('custom_id') if user else uid}) درخواست گفتگوی شما را رد کرد.",
+            )
+        except Exception:
+            pass
+        return
+
+    if call.data.startswith("accept_admin_chat_"):
+        admin_id = int(call.data.replace("accept_admin_chat_", ""))
+
+        # اگر کاربر یا مدیر در حال چت دیگری بودند، چت قبلی را قطع می‌کنیم
+        u_curr = db.get_user(uid)
+        if u_curr and u_curr.get("status") == "chatting":
+            old_p = db.disconnect_user(uid)
+            if old_p:
+                db.set_user_state(old_p, "main_menu")
+                bot.send_message(
+                    old_p,
+                    "طرف مقابل مکالمه را پایان داد! 🚪",
+                    reply_markup=get_main_kb(old_p),
+                )
+
+        a_curr = db.get_user(admin_id)
+        if a_curr and a_curr.get("status") == "chatting":
+            old_ap = db.disconnect_user(admin_id)
+            if old_ap:
+                db.set_user_state(old_ap, "main_menu")
+                bot.send_message(
+                    old_ap,
+                    "طرف مقابل مکالمه را پایان داد! 🚪",
+                    reply_markup=get_main_kb(old_ap),
+                )
+
+        db.connect_two_users_directly(uid, admin_id)
+        try:
+            bot.delete_message(call.message.chat.id, call.message.message_id)
+        except Exception:
+            pass
+
+        bot.send_message(
+            uid,
+            "✨ گفتگو با مدیریت برقرار شد! می‌توانید پیام خود را ارسال کنید 👇",
+            reply_markup=kb.chatting_keyboard(),
+        )
+        bot.send_message(
+            admin_id,
+            f"🎉 کاربر «{user.get('name') if user else uid}» (/{user.get('custom_id') if user else uid}) دعوت شما را پذیرفت و چت مستقیم برقرار شد! 👇",
+            reply_markup=kb.chatting_keyboard(),
+        )
+
+
+@bot.callback_query_handler(
+    func=lambda call: call.data.startswith("repban_")
+    or call.data == "repdismiss"
+)
+def handle_report_admin_decision(call):
+    uid = call.from_user.id
+    if not is_admin(uid):
+        return
+
+    if call.data == "repdismiss":
+        bot.answer_callback_query(call.id, "گزارش نادیده گرفته شد.")
+        try:
+            bot.delete_message(call.message.chat.id, call.message.message_id)
+        except Exception:
+            pass
+        return
+
+    if call.data.startswith("repban_"):
+        target_id = int(call.data.replace("repban_", ""))
+        db.add_or_update_user(target_id, is_banned=True)
+        old_p = db.disconnect_user(target_id)
+        if old_p:
+            db.set_user_state(old_p, "main_menu")
+            bot.send_message(
+                old_p,
+                "طرف مقابل به دلیل تخلف از چت خارج شد.",
+                reply_markup=get_main_kb(old_p),
+            )
+        bot.answer_callback_query(call.id, "🚫 کاربر مسدود شد!")
+        try:
+            bot.edit_message_text(
+                f"🚫 کاربر {target_id} توسط مدیریت مسدود شد.",
+                call.message.chat.id,
+                call.message.message_id,
+            )
+        except Exception:
+            pass
 
 
 # --- استارت، ورود و باز کردن لینک‌های عکس و ویدیو ---
@@ -322,10 +543,22 @@ def handle_start(message):
             state="reg_name",
         )
         USER_CONTEXT[user_id] = "reg_waiting_name"
+        welcome_markup = types.InlineKeyboardMarkup()
+        welcome_markup.add(
+            types.InlineKeyboardButton(
+                "📢 کانال رسمی ربات", url=REQUIRED_CHANNEL_LINK
+            )
+        )
         bot.send_message(
             user_id,
-            "سلام رفیق! خیلی خوش اومدی به جمع ما 🎭✨\n"
+            "سلام رفیق! خیلی خوش اومدی به جمع صمیمی ما 🎭✨\n"
             "اینجا می‌تونی با کلی آدم جدید و باحال به‌صورت کاملاً ناشناس گپ بزنی و دوستای جدید پیدا کنی.\n\n"
+            f"🔗 کانال رسمی و اطلاعیه‌های ما:\n{REQUIRED_CHANNEL_LINK}",
+            reply_markup=welcome_markup,
+            disable_web_page_preview=True,
+        )
+        bot.send_message(
+            user_id,
             "برای شروع، اول **نام** قشنگت رو برام بنویس (تکمیل نام، جنسیت و موقعیت اجباریه):",
             parse_mode="Markdown",
             reply_markup=types.ReplyKeyboardRemove(),
@@ -339,11 +572,10 @@ def handle_start(message):
         return
 
     db.set_user_state(user_id, "main_menu")
-    bot.send_message(
+    send_main_menu_with_link(
         user_id,
         f"سلام {user.get('name')} جان! خیلی خوش اومدی 🌟\n"
         "آماده‌ای یه هم‌صحبت جدید پیدا کنی؟ از منوی پایین انتخاب کن 👇",
-        reply_markup=get_main_kb(user_id),
     )
 
 
@@ -373,7 +605,92 @@ def exit_admin_panel(message):
     uid = message.chat.id
     USER_CONTEXT.pop(uid, None)
     db.set_user_state(uid, "main_menu")
-    bot.send_message(uid, "منوی اصلی:", reply_markup=get_main_kb(uid))
+    send_main_menu_with_link(uid)
+
+
+# --- بخش جدید: چت با کاربران (انتخاب دختر یا پسر -> نمایش پروفایل -> دعوت‌نامه لوکس) ---
+@bot.message_handler(
+    func=lambda msg: is_admin(msg.chat.id)
+    and msg.text in ["💬 چت با کاربران", "🔙 بازگشت به انتخاب جنسیت"]
+)
+def admin_chat_select_gender(message):
+    uid = message.chat.id
+    USER_CONTEXT[uid] = "admin_chat_choosing_gender"
+    bot.send_message(
+        uid,
+        "💬 می‌خواهید لیست کدام کاربران را ببینید؟\nدختر یا پسر را انتخاب کنید:",
+        reply_markup=kb.admin_chat_gender_kb(),
+    )
+
+
+@bot.message_handler(
+    func=lambda msg: is_admin(msg.chat.id)
+    and msg.text in ["👧 کاربران دختر", "👦 کاربران پسر"]
+)
+def admin_chat_list_by_gender(message):
+    uid = message.chat.id
+    gender = "دختر" if "دختر" in message.text else "پسر"
+    users = db.get_users_by_gender_for_admin(gender, limit=100)
+
+    if not users:
+        bot.send_message(
+            uid,
+            f"فعلاً هیچ کاربر «{gender}» ثبت‌نام نکرده است.",
+            reply_markup=kb.admin_chat_gender_kb(),
+        )
+        return
+
+    bot.send_message(
+        uid,
+        f"📋 لیست کاربران {gender} ({len(users)} نفر):\nروی آیدی هر کاربر در کیبورد پایین بزنید تا پروفایلش باز شود:",
+        reply_markup=kb.admin_gender_users_kb(users),
+    )
+
+
+@bot.message_handler(
+    func=lambda msg: is_admin(msg.chat.id)
+    and msg.text
+    and msg.text.startswith("🆔 ")
+    and "|" in msg.text
+)
+def admin_view_user_profile_to_chat(message):
+    uid = message.chat.id
+    cid = message.text.split("|")[-1].strip()
+    target = db.get_user_by_custom_id(cid)
+    if not target:
+        bot.send_message(uid, "❌ کاربر پیدا نشد!")
+        return
+
+    t_uid = target["user_id"]
+    markup = types.InlineKeyboardMarkup(row_width=1)
+    markup.add(
+        types.InlineKeyboardButton(
+            "✍️ ارسال درخواست چت با پیام دلخواه مدیر",
+            callback_data=f"admin_invite_custom_{t_uid}",
+        ),
+        types.InlineKeyboardButton(
+            "✨ ارسال درخواست چت با پیام پیش‌فرض لوکس",
+            callback_data=f"admin_invite_default_{t_uid}",
+        ),
+    )
+
+    caption = format_profile_caption(target, "👤 پروفایل کامل کاربر:")
+    send_profile_card_with_photo(uid, target, caption, reply_markup=markup)
+
+
+@bot.message_handler(
+    func=lambda msg: is_admin(msg.chat.id)
+    and str(USER_CONTEXT.get(msg.chat.id, "")).startswith(
+        "admin_writing_invite_msg_"
+    )
+    and msg.text != "🔙 بازگشت"
+)
+def admin_receive_custom_invite_message(message):
+    uid = message.chat.id
+    ctx = USER_CONTEXT.pop(uid, "")
+    target_id = int(ctx.replace("admin_writing_invite_msg_", ""))
+    custom_note = (message.text or "").strip()
+    dispatch_luxury_admin_invite(uid, target_id, custom_note=custom_note)
 
 
 @bot.message_handler(
@@ -619,13 +936,17 @@ def handle_back_button(message):
     if enforce_channel_membership(user_id):
         return
 
-    ctx = USER_CONTEXT.pop(user_id, None)
+    ctx = str(USER_CONTEXT.pop(user_id, "") or "")
 
-    if is_admin(user_id) and ctx in [
-        "admin_waiting_broadcast",
-        "admin_waiting_ban",
-        "admin_waiting_unban",
-    ]:
+    if is_admin(user_id) and (
+        ctx
+        in [
+            "admin_waiting_broadcast",
+            "admin_waiting_ban",
+            "admin_waiting_unban",
+        ]
+        or ctx.startswith("admin_writing_invite_msg_")
+    ):
         bot.send_message(
             user_id, "🎛 پنل مدیریت:", reply_markup=kb.admin_main_reply_kb()
         )
@@ -642,9 +963,7 @@ def handle_back_button(message):
 
     if curr in ["profile_menu", "connect_filter"]:
         db.set_user_state(user_id, "main_menu")
-        bot.send_message(
-            user_id, "منوی اصلی:", reply_markup=get_main_kb(user_id)
-        )
+        send_main_menu_with_link(user_id)
 
     elif curr == "select_specific_age":
         db.set_user_state(user_id, "select_age_range")
@@ -675,9 +994,7 @@ def handle_back_button(message):
 
     else:
         db.set_user_state(user_id, "main_menu")
-        bot.send_message(
-            user_id, "منوی اصلی:", reply_markup=get_main_kb(user_id)
-        )
+        send_main_menu_with_link(user_id)
 
 
 # --- ثبت نام اجباری (مرحله ۱: وارد کردن نام) ---
@@ -893,6 +1210,7 @@ def set_photo_preference(message):
         format_profile_caption(user, "🎉 پروفایل شما آماده شد:"),
         reply_markup=get_main_kb(user_id),
     )
+    send_main_menu_with_link(user_id)
 
 
 @bot.message_handler(
@@ -915,6 +1233,7 @@ def receive_custom_avatar(message):
         format_profile_caption(user, "✅ عکس پروفایل شما ذخیره شد:"),
         reply_markup=get_main_kb(user_id),
     )
+    send_main_menu_with_link(user_id)
 
 
 # --- بخش پروفایل من ---
@@ -1062,7 +1381,6 @@ def start_filtered_search(message):
     }
     chosen_filter = f_map.get(message.text, "any")
 
-    # بررسی سهمیه ۵ بار در ساعت برای جستجوی دختر
     quota_note = ""
     if chosen_filter == "girl":
         allowed, rem_left, rem_mins = db.check_and_use_girl_search(
@@ -1084,10 +1402,8 @@ def start_filtered_search(message):
         old_partner = db.disconnect_user(user_id)
         if old_partner:
             db.set_user_state(old_partner, "main_menu")
-            bot.send_message(
-                old_partner,
-                "طرف مقابل مکالمه رو قطع کرد و رفت نفر بعدی! 🚪",
-                reply_markup=get_main_kb(old_partner),
+            send_main_menu_with_link(
+                old_partner, "طرف مقابل مکالمه رو قطع کرد و رفت نفر بعدی! 🚪"
             )
 
     partner_id = db.find_match(user_id, chosen_filter)
@@ -1108,25 +1424,56 @@ def start_filtered_search(message):
         )
 
 
+# --- پایان مکالمه با تایید دومرحله‌ای («بله، مطمئنم») ---
+@bot.message_handler(func=lambda msg: msg.text == "❌ پایان مکالمه")
+def ask_confirm_stop_chat(message):
+    user_id = message.chat.id
+    if enforce_channel_membership(user_id):
+        return
+
+    user = db.get_user(user_id)
+    if not user or user.get("status") != "chatting":
+        db.set_user_state(user_id, "main_menu")
+        send_main_menu_with_link(user_id)
+        return
+
+    bot.send_message(
+        user_id,
+        "⚠️ مطمئنی که می‌خوای مکالمه رو تموم کنی؟",
+        reply_markup=kb.confirm_end_chat_keyboard(),
+    )
+
+
+@bot.message_handler(func=lambda msg: msg.text == "🔙 انصراف و ادامه چت")
+def cancel_stop_chat(message):
+    user_id = message.chat.id
+    user = db.get_user(user_id)
+    if user and user.get("status") == "chatting":
+        bot.send_message(
+            user_id,
+            "✅ عالیه! به مکالمه ادامه بده 👇",
+            reply_markup=kb.chatting_keyboard(),
+        )
+    else:
+        db.set_user_state(user_id, "main_menu")
+        send_main_menu_with_link(user_id)
+
+
 @bot.message_handler(
-    func=lambda msg: msg.text in ["❌ پایان مکالمه", "⛔ انصراف از جستجو"]
+    func=lambda msg: msg.text in ["✅ بله، مطمئنم", "⛔ انصراف از جستجو"]
 )
-def stop_chat(message):
+def stop_chat_confirmed(message):
     user_id = message.chat.id
     if enforce_channel_membership(user_id):
         return
 
     partner_id = db.disconnect_user(user_id)
     db.set_user_state(user_id, "main_menu")
-    bot.send_message(
-        user_id, "مکالمه پایان یافت.", reply_markup=get_main_kb(user_id)
-    )
+    send_main_menu_with_link(user_id, "مکالمه پایان یافت. 👋")
     if partner_id:
         db.set_user_state(partner_id, "main_menu")
-        bot.send_message(
-            partner_id,
-            "طرف مقابل مکالمه رو ترک کرد! 🚪",
-            reply_markup=get_main_kb(partner_id),
+        send_main_menu_with_link(
+            partner_id, "طرف مقابل مکالمه رو ترک کرد! 🚪"
         )
 
 
@@ -1245,7 +1592,7 @@ def delete_timed_message(chat_id, message_id, delay=10):
         pass
 
 
-# --- گزارش تخلف ---
+# --- گزارش تخلف (ارسال هشدار مسدودسازی به مدیر پس از رسیدن به ۴ گزارش) ---
 @bot.message_handler(func=lambda msg: msg.text == "⚠️ گزارش تخلف")
 def report_partner(message):
     user_id = message.chat.id
@@ -1258,19 +1605,39 @@ def report_partner(message):
 
     partner_id = user["partner_id"]
     partner = db.get_user(partner_id)
+
+    is_new, total_reports = db.add_user_report(user_id, partner_id)
+    if not is_new:
+        bot.send_message(
+            user_id, "⚠️ شما قبلاً این کاربر را گزارش داده‌اید."
+        )
+        return
+
     bot.send_message(
-        user_id, "✅ گزارش شما ثبت شد و توسط ادمین بررسی خواهد شد."
+        user_id, "✅ گزارش تخلف شما ثبت شد و در سیستم بررسی می‌شود."
     )
 
     aid = get_admin_id()
-    if aid != 0:
+    if aid != 0 and total_reports >= 4:
+        markup = types.InlineKeyboardMarkup(row_width=2)
+        markup.add(
+            types.InlineKeyboardButton(
+                "🚫 مسدودسازی کاربر", callback_data=f"repban_{partner_id}"
+            ),
+            types.InlineKeyboardButton(
+                "❌ نادیده گرفتن", callback_data="repdismiss"
+            ),
+        )
         report_text = (
-            f"🚨 گزارش تخلف جدید!\n"
-            f"شاکی: {user.get('name')} (/{user.get('custom_id')})\n"
-            f"متهم: {partner.get('name') if partner else '-'} (/{partner.get('custom_id') if partner else '-'})"
+            f"🚨 <b>هشدار حدنصاب گزارش تخلف!</b>\n"
+            f"کاربر «{partner.get('name') if partner else '-'}» (/{partner.get('custom_id') if partner else partner_id}) "
+            f"تاکنون توسط <b>{total_reports} نفر</b> گزارش شده است!\n\n"
+            f"آیا مایل به مسدودسازی این کاربر هستید؟"
         )
         try:
-            bot.send_message(aid, report_text)
+            bot.send_message(
+                aid, report_text, parse_mode="HTML", reply_markup=markup
+            )
         except Exception:
             pass
 
@@ -1302,14 +1669,12 @@ def relay_all_chat_messages(message):
 
     partner_id = user["partner_id"]
 
-    # ۱. ممنوعیت قطعی استیکر
     if message.content_type == "sticker":
         bot.send_message(
             user_id, "⚠️ ارسال استیکر در محیط چت ناشناس ممنوع است!"
         )
         return
 
-    # ۲. پیام متنی و فیلتر لینک/آیدی
     if message.content_type == "text":
         if contains_links_or_usernames(message.text):
             bot.send_message(
@@ -1321,7 +1686,6 @@ def relay_all_chat_messages(message):
         bot.send_message(partner_id, message.text)
         return
 
-    # ۳. عکس (معمولی و تایم‌دار محوشونده)
     if message.content_type == "photo":
         fid = message.photo[-1].file_id
         cap = message.caption or ""
@@ -1357,7 +1721,6 @@ def relay_all_chat_messages(message):
         bot.send_photo(partner_id, fid, caption=cap)
         return
 
-    # ۴. ویس، ویدیو، فایل صوتی و سند
     if message.content_type == "voice":
         db.log_chat_message(user_id, partner_id, "voice", message.voice.file_id)
         bot.send_voice(partner_id, message.voice.file_id)
