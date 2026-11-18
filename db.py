@@ -47,6 +47,8 @@ def init_db():
                 state VARCHAR(50) DEFAULT 'main_menu',
                 prev_state VARCHAR(50) DEFAULT 'main_menu',
                 is_banned BOOLEAN DEFAULT FALSE,
+                girl_search_count INT DEFAULT 0,
+                girl_search_reset_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 last_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
         """)
@@ -55,6 +57,8 @@ def init_db():
             "ALTER TABLE anon_users ADD COLUMN IF NOT EXISTS search_filter VARCHAR(30) DEFAULT 'any';",
             "ALTER TABLE anon_users ADD COLUMN IF NOT EXISTS prev_state VARCHAR(50) DEFAULT 'main_menu';",
             "ALTER TABLE anon_users ADD COLUMN IF NOT EXISTS last_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP;",
+            "ALTER TABLE anon_users ADD COLUMN IF NOT EXISTS girl_search_count INT DEFAULT 0;",
+            "ALTER TABLE anon_users ADD COLUMN IF NOT EXISTS girl_search_reset_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP;",
         ]
         for q in alter_queries:
             cur.execute(q)
@@ -163,6 +167,70 @@ def set_user_state(user_id, new_state):
         )
         conn.commit()
         cur.close()
+    finally:
+        put_conn(conn)
+
+
+def check_and_use_girl_search(user_id, max_per_hour=5):
+    """
+    بررسی سهمیه ساعتی جستجوی دختر (۵ بار در هر ساعت):
+    - اگر ۱ ساعت از اولین جستجوی دوره گذشته باشد، سهمیه ریست می‌شود.
+    - برمی‌گرداند: (مجاز_است: bool, تعداد_باقی‌مانده: int, دقیقه_تا_تمدید: int)
+    """
+    conn = get_conn()
+    try:
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        cur.execute(
+            """
+            SELECT 
+                COALESCE(girl_search_count, 0) AS cnt,
+                girl_search_reset_at,
+                EXTRACT(EPOCH FROM (CURRENT_TIMESTAMP - COALESCE(girl_search_reset_at, CURRENT_TIMESTAMP - INTERVAL '2 hours'))) AS elapsed_sec
+            FROM anon_users
+            WHERE user_id = %s;
+        """,
+            (user_id,),
+        )
+        row = cur.fetchone()
+        if not row:
+            cur.close()
+            return False, 0, 60
+
+        elapsed = float(row["elapsed_sec"] or 0)
+        cnt = int(row["cnt"] or 0)
+
+        # اگر بیش از ۳۶۰۰ ثانیه (۱ ساعت) گذشته باشد، سهمیه تمدید می‌شود
+        if elapsed >= 3600 or row["girl_search_reset_at"] is None:
+            cur.execute(
+                """
+                UPDATE anon_users
+                SET girl_search_count = 1, girl_search_reset_at = CURRENT_TIMESTAMP
+                WHERE user_id = %s;
+            """,
+                (user_id,),
+            )
+            conn.commit()
+            cur.close()
+            return True, max_per_hour - 1, 60
+
+        if cnt >= max_per_hour:
+            rem_minutes = max(1, int((3600 - elapsed) // 60) + 1)
+            cur.close()
+            return False, 0, rem_minutes
+
+        new_cnt = cnt + 1
+        cur.execute(
+            """
+            UPDATE anon_users
+            SET girl_search_count = %s
+            WHERE user_id = %s;
+        """,
+            (new_cnt, user_id),
+        )
+        conn.commit()
+        rem_minutes = max(1, int((3600 - elapsed) // 60) + 1)
+        cur.close()
+        return True, max_per_hour - new_cnt, rem_minutes
     finally:
         put_conn(conn)
 

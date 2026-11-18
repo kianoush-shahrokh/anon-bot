@@ -21,6 +21,10 @@ except Exception:
 
 USER_CONTEXT = {}
 
+# تنظیمات کانال جوین اجباری
+REQUIRED_CHANNEL_USERNAME = "@KR_to_infinity"
+REQUIRED_CHANNEL_LINK = "https://t.me/KR_to_infinity"
+
 DEFAULT_BOY_AVATAR = "https://cdn-icons-png.flaticon.com/512/4140/4140048.png"
 DEFAULT_GIRL_AVATAR = "https://cdn-icons-png.flaticon.com/512/4140/4140047.png"
 
@@ -38,6 +42,42 @@ def is_admin(user_id):
 
 def get_main_kb(user_id):
     return kb.main_menu_keyboard(is_admin=is_admin(user_id))
+
+
+def is_user_member_of_channel(user_id):
+    if is_admin(user_id):
+        return True
+    try:
+        member = bot.get_chat_member(REQUIRED_CHANNEL_USERNAME, user_id)
+        return member.status in ["creator", "administrator", "member", "restricted"]
+    except Exception:
+        return False
+
+
+def enforce_channel_membership(user_id):
+    """اگر کاربر عضو کانال نباشد پیام جوین اجباری را می‌فرستد و True برمی‌گرداند"""
+    if is_user_member_of_channel(user_id):
+        return False
+
+    markup = types.InlineKeyboardMarkup(row_width=1)
+    markup.add(
+        types.InlineKeyboardButton(
+            "📢 عضویت در کانال", url=REQUIRED_CHANNEL_LINK
+        ),
+        types.InlineKeyboardButton(
+            "✅ عضو شدم / بررسی مجدد", callback_data="check_channel_join"
+        ),
+    )
+    bot.send_message(
+        user_id,
+        "سلام رفیق! 👋✨\n"
+        "برای استفاده از ربات چت ناشناس، ابتدا باید در کانال رسمی ما عضو بشی:\n\n"
+        f"🔗 {REQUIRED_CHANNEL_LINK}\n\n"
+        "بعد از عضویت، روی دکمه «✅ عضو شدم / بررسی مجدد» پایین بزن تا ربات برات فعال بشه 👇",
+        reply_markup=markup,
+        disable_web_page_preview=True,
+    )
+    return True
 
 
 def is_profile_complete(u):
@@ -59,7 +99,7 @@ def enforce_registration_step(user_id, u):
         USER_CONTEXT[user_id] = "reg_waiting_name"
         bot.send_message(
             user_id,
-            "برای شروع و استفاده از ربات، ابتدا **نام** خودت را بنویس (اجباری):",
+            "برای شروع و آشنایی بیشتر، اول **نام** قشنگت رو برام بنویس (اجباری):",
             parse_mode="Markdown",
             reply_markup=types.ReplyKeyboardRemove(),
         )
@@ -69,7 +109,7 @@ def enforce_registration_step(user_id, u):
         db.set_user_state(user_id, "reg_gender")
         bot.send_message(
             user_id,
-            "لطفاً **جنسیت** خودت را از دکمه‌های پایین انتخاب کن (اجباری):",
+            "حالا **جنسیت** خودت رو از دکمه‌های پایین انتخاب کن (اجباری):",
             parse_mode="Markdown",
             reply_markup=kb.gender_keyboard(allow_back=False),
         )
@@ -79,7 +119,7 @@ def enforce_registration_step(user_id, u):
         db.set_user_state(user_id, "reg_age_range")
         bot.send_message(
             user_id,
-            "بازه **سنی** خودت را انتخاب کن (اجباری):",
+            "بازه **سنی** خودت رو انتخاب کن (اجباری):",
             parse_mode="Markdown",
             reply_markup=kb.age_ranges_keyboard(allow_back=False),
         )
@@ -89,7 +129,7 @@ def enforce_registration_step(user_id, u):
         db.set_user_state(user_id, "reg_province")
         bot.send_message(
             user_id,
-            "**استان** محل سکونت خودت را انتخاب کن (اجباری):",
+            "**استان** محل سکونتت رو انتخاب کن (اجباری):",
             parse_mode="Markdown",
             reply_markup=kb.provinces_keyboard(allow_back=False),
         )
@@ -99,7 +139,7 @@ def enforce_registration_step(user_id, u):
         db.set_user_state(user_id, f"reg_city_{u['province']}")
         bot.send_message(
             user_id,
-            f"**شهر** خودت در {u['province']} را انتخاب کن (اجباری):",
+            f"**شهر** خودت در {u['province']} رو انتخاب کن (اجباری):",
             parse_mode="Markdown",
             reply_markup=kb.cities_keyboard(u["province"], allow_back=False),
         )
@@ -196,6 +236,49 @@ def send_single_logged_media_to_admin(admin_id, log_row):
         bot.send_message(admin_id, f"⚠️ خطا در باز کردن فایل: {e}")
 
 
+# --- تایید عضویت در کانال از طریق دکمه شیشه‌ای ---
+@bot.callback_query_handler(func=lambda call: call.data == "check_channel_join")
+def callback_check_channel_join(call):
+    uid = call.from_user.id
+    if not is_user_member_of_channel(uid):
+        bot.answer_callback_query(
+            call.id,
+            "❌ هنوز عضو کانال نشدی! اول عضو شو و بعد دوباره دکمه بررسی رو بزن.",
+            show_alert=True,
+        )
+        return
+
+    bot.answer_callback_query(call.id, "✅ عضویتت تایید شد! خوش اومدی 🌟")
+    try:
+        bot.delete_message(call.message.chat.id, call.message.message_id)
+    except Exception:
+        pass
+
+    user = db.get_user(uid)
+    if not user:
+        db.add_or_update_user(uid, state="reg_name")
+        USER_CONTEXT[uid] = "reg_waiting_name"
+        bot.send_message(
+            uid,
+            "سلام رفیق! خیلی خوش اومدی به جمع ما 🎭✨\n"
+            "اینجا می‌تونی با کلی آدم جدید و باحال به‌صورت کاملاً ناشناس گپ بزنی.\n\n"
+            "برای شروع، اول **نام** قشنگت رو برام بنویس (تکمیل نام، جنسیت و موقعیت اجباریه):",
+            parse_mode="Markdown",
+            reply_markup=types.ReplyKeyboardRemove(),
+        )
+        return
+
+    if enforce_registration_step(uid, user):
+        return
+
+    db.set_user_state(uid, "main_menu")
+    bot.send_message(
+        uid,
+        f"سلام {user.get('name')} جان! خوش برگشتی 🌟\nاز منوی پایین هر بخش رو که دوست داری انتخاب کن 👇",
+        reply_markup=get_main_kb(uid),
+    )
+
+
 # --- استارت، ورود و باز کردن لینک‌های عکس و ویدیو ---
 @bot.message_handler(commands=["start"])
 def handle_start(message):
@@ -212,6 +295,9 @@ def handle_start(message):
                 bot.send_message(user_id, "❌ فایل پیدا نشد.")
         except Exception:
             pass
+        return
+
+    if enforce_channel_membership(user_id):
         return
 
     USER_CONTEXT.pop(user_id, None)
@@ -238,8 +324,9 @@ def handle_start(message):
         USER_CONTEXT[user_id] = "reg_waiting_name"
         bot.send_message(
             user_id,
-            "سلام! به ربات چت ناشناس خوش اومدی 🎭\n"
-            "برای شروع، ابتدا **نام** خودت را بنویس (تکمیل نام، جنسیت و موقعیت اجباری است):",
+            "سلام رفیق! خیلی خوش اومدی به جمع ما 🎭✨\n"
+            "اینجا می‌تونی با کلی آدم جدید و باحال به‌صورت کاملاً ناشناس گپ بزنی و دوستای جدید پیدا کنی.\n\n"
+            "برای شروع، اول **نام** قشنگت رو برام بنویس (تکمیل نام، جنسیت و موقعیت اجباریه):",
             parse_mode="Markdown",
             reply_markup=types.ReplyKeyboardRemove(),
         )
@@ -254,7 +341,8 @@ def handle_start(message):
     db.set_user_state(user_id, "main_menu")
     bot.send_message(
         user_id,
-        "منوی اصلی چت ناشناس 👇",
+        f"سلام {user.get('name')} جان! خیلی خوش اومدی 🌟\n"
+        "آماده‌ای یه هم‌صحبت جدید پیدا کنی؟ از منوی پایین انتخاب کن 👇",
         reply_markup=get_main_kb(user_id),
     )
 
@@ -528,6 +616,9 @@ def handle_admin_text_actions(message):
 @bot.message_handler(func=lambda msg: msg.text == "🔙 بازگشت")
 def handle_back_button(message):
     user_id = message.chat.id
+    if enforce_channel_membership(user_id):
+        return
+
     ctx = USER_CONTEXT.pop(user_id, None)
 
     if is_admin(user_id) and ctx in [
@@ -544,7 +635,6 @@ def handle_back_button(message):
     if not user:
         return
 
-    # اگر پروفایل هنوز کامل نشده باشد، اجازه خروج از مراحل اجباری را نمی‌دهد
     if enforce_registration_step(user_id, user):
         return
 
@@ -598,6 +688,9 @@ def handle_back_button(message):
 )
 def handle_registration_name(message):
     user_id = message.chat.id
+    if enforce_channel_membership(user_id):
+        return
+
     raw_name = message.text.strip()
     if contains_links_or_usernames(raw_name) or len(raw_name) < 2:
         bot.send_message(
@@ -616,6 +709,9 @@ def handle_registration_name(message):
 @bot.message_handler(func=lambda msg: msg.text in ["پسر 👦", "دختر 👧"])
 def set_gender(message):
     user_id = message.chat.id
+    if enforce_channel_membership(user_id):
+        return
+
     g = "پسر" if "پسر" in message.text else "دختر"
     db.add_or_update_user(user_id, gender=g)
     user = db.get_user(user_id)
@@ -645,6 +741,9 @@ def set_gender(message):
 )
 def set_age_range(message):
     user_id = message.chat.id
+    if enforce_channel_membership(user_id):
+        return
+
     user = db.get_user(user_id)
     mapping = {
         "۹ تا ۱۳": (9, 13),
@@ -668,6 +767,9 @@ def set_age_range(message):
 @bot.message_handler(func=lambda msg: msg.text and msg.text.startswith("سن "))
 def set_exact_age(message):
     user_id = message.chat.id
+    if enforce_channel_membership(user_id):
+        return
+
     try:
         val = int(message.text.replace("سن ", "").strip())
         db.add_or_update_user(user_id, age=val)
@@ -690,6 +792,9 @@ def set_exact_age(message):
 )
 def set_province(message):
     user_id = message.chat.id
+    if enforce_channel_membership(user_id):
+        return
+
     prov = message.text.strip()
     db.add_or_update_user(user_id, province=prov)
     user = db.get_user(user_id)
@@ -705,6 +810,9 @@ def set_province(message):
 @bot.message_handler(func=lambda msg: msg.text and msg.text.startswith("شهر "))
 def set_city(message):
     user_id = message.chat.id
+    if enforce_channel_membership(user_id):
+        return
+
     city_name = message.text.replace("شهر ", "").strip()
     db.add_or_update_user(user_id, city=city_name)
     user = db.get_user(user_id)
@@ -736,6 +844,9 @@ def set_city(message):
 )
 def set_photo_preference(message):
     user_id = message.chat.id
+    if enforce_channel_membership(user_id):
+        return
+
     t = message.text
 
     if t == "📸 استفاده از عکس تلگرامم":
@@ -790,6 +901,9 @@ def set_photo_preference(message):
 )
 def receive_custom_avatar(message):
     user_id = message.chat.id
+    if enforce_channel_membership(user_id):
+        return
+
     fid = message.photo[-1].file_id
     db.add_or_update_user(user_id, photo_file_id=fid)
     USER_CONTEXT.pop(user_id, None)
@@ -803,10 +917,13 @@ def receive_custom_avatar(message):
     )
 
 
-# --- بخش پروفایل من (بدون بیوگرافی و لایک) ---
+# --- بخش پروفایل من ---
 @bot.message_handler(func=lambda msg: msg.text == "👤 پروفایل من")
 def show_my_profile(message):
     user_id = message.chat.id
+    if enforce_channel_membership(user_id):
+        return
+
     user = db.get_user(user_id)
     if enforce_registration_step(user_id, user):
         return
@@ -821,6 +938,8 @@ def show_my_profile(message):
 @bot.message_handler(func=lambda msg: msg.text == "✏️ تغییر نام")
 def edit_name_prompt(message):
     user_id = message.chat.id
+    if enforce_channel_membership(user_id):
+        return
     USER_CONTEXT[user_id] = "waiting_for_name"
     bot.send_message(
         user_id,
@@ -835,6 +954,8 @@ def edit_name_prompt(message):
 )
 def save_text_profile_fields(message):
     user_id = message.chat.id
+    if enforce_channel_membership(user_id):
+        return
     if contains_links_or_usernames(message.text) or len(message.text.strip()) < 2:
         bot.send_message(
             user_id, "⚠️ نام نامعتبر است (قرار دادن آیدی و لینک مجاز نیست)!"
@@ -849,6 +970,8 @@ def save_text_profile_fields(message):
 @bot.message_handler(func=lambda msg: msg.text == "✏️ تغییر جنسیت")
 def edit_gender_prompt(message):
     user_id = message.chat.id
+    if enforce_channel_membership(user_id):
+        return
     db.set_user_state(user_id, "edit_gender")
     bot.send_message(
         user_id, "جنسیت خود را انتخاب کنید:", reply_markup=kb.gender_keyboard()
@@ -858,6 +981,8 @@ def edit_gender_prompt(message):
 @bot.message_handler(func=lambda msg: msg.text == "✏️ تغییر سن")
 def edit_age_prompt(message):
     user_id = message.chat.id
+    if enforce_channel_membership(user_id):
+        return
     db.set_user_state(user_id, "select_age_range")
     bot.send_message(
         user_id,
@@ -869,6 +994,8 @@ def edit_age_prompt(message):
 @bot.message_handler(func=lambda msg: msg.text == "✏️ تغییر شهر/استان")
 def edit_province_prompt(message):
     user_id = message.chat.id
+    if enforce_channel_membership(user_id):
+        return
     db.set_user_state(user_id, "select_province")
     bot.send_message(
         user_id,
@@ -880,6 +1007,8 @@ def edit_province_prompt(message):
 @bot.message_handler(func=lambda msg: msg.text == "📸 تغییر عکس")
 def edit_photo_prompt(message):
     user_id = message.chat.id
+    if enforce_channel_membership(user_id):
+        return
     db.set_user_state(user_id, "select_photo_type")
     bot.send_message(
         user_id,
@@ -888,10 +1017,13 @@ def edit_photo_prompt(message):
     )
 
 
-# --- اتصال به ناشناس (فقط شانسی، دختر، پسر) ---
+# --- اتصال به ناشناس (با محدودیت ۵ جستجوی دختر در هر ساعت) ---
 @bot.message_handler(func=lambda msg: msg.text == "⚡ به یه ناشناس وصلم کن!")
 def open_connect_filters(message):
     user_id = message.chat.id
+    if enforce_channel_membership(user_id):
+        return
+
     user = db.get_user(user_id)
     if enforce_registration_step(user_id, user):
         return
@@ -915,9 +1047,38 @@ def open_connect_filters(message):
 )
 def start_filtered_search(message):
     user_id = message.chat.id
+    if enforce_channel_membership(user_id):
+        return
+
     user = db.get_user(user_id)
     if enforce_registration_step(user_id, user):
         return
+
+    f_map = {
+        "🎲 جستجوی شانسی": "any",
+        "👧 جستجوی دختر": "girl",
+        "👦 جستجوی پسر": "boy",
+        "⏭ هم‌صحبت بعدی": user.get("search_filter", "any"),
+    }
+    chosen_filter = f_map.get(message.text, "any")
+
+    # بررسی سهمیه ۵ بار در ساعت برای جستجوی دختر
+    quota_note = ""
+    if chosen_filter == "girl":
+        allowed, rem_left, rem_mins = db.check_and_use_girl_search(
+            user_id, max_per_hour=5
+        )
+        if not allowed:
+            bot.send_message(
+                user_id,
+                f"⏳ سهمیه ۵ بار جستجوی دختر در این ساعت تمام شده است!\n"
+                f"🔄 حدود **{rem_mins} دقیقه** دیگر سهمیه شما دوباره تمدید می‌شود.\n"
+                f"فعلاً می‌تونی از «🎲 جستجوی شانسی» استفاده کنی.",
+                parse_mode="Markdown",
+                reply_markup=kb.connect_filter_keyboard(),
+            )
+            return
+        quota_note = f"\n(سهمیه باقی‌مانده جستجوی دختر در این ساعت: {rem_left} از ۵)"
 
     if user["status"] == "chatting":
         old_partner = db.disconnect_user(user_id)
@@ -929,25 +1090,20 @@ def start_filtered_search(message):
                 reply_markup=get_main_kb(old_partner),
             )
 
-    f_map = {
-        "🎲 جستجوی شانسی": "any",
-        "👧 جستجوی دختر": "girl",
-        "👦 جستجوی پسر": "boy",
-        "⏭ هم‌صحبت بعدی": user.get("search_filter", "any"),
-    }
-    chosen_filter = f_map.get(message.text, "any")
     partner_id = db.find_match(user_id, chosen_filter)
 
     if partner_id:
         msg_text = "🎉 هم‌صحبت پیدا شد و وصل شدید! سلام کن 👋"
-        bot.send_message(user_id, msg_text, reply_markup=kb.chatting_keyboard())
+        bot.send_message(
+            user_id, msg_text + quota_note, reply_markup=kb.chatting_keyboard()
+        )
         bot.send_message(
             partner_id, msg_text, reply_markup=kb.chatting_keyboard()
         )
     else:
         bot.send_message(
             user_id,
-            "🔍 در حال جستجوی هم‌صحبت... منتظر بمونید.",
+            "🔍 در حال جستجوی هم‌صحبت... منتظر بمونید." + quota_note,
             reply_markup=kb.waiting_keyboard(),
         )
 
@@ -957,6 +1113,9 @@ def start_filtered_search(message):
 )
 def stop_chat(message):
     user_id = message.chat.id
+    if enforce_channel_membership(user_id):
+        return
+
     partner_id = db.disconnect_user(user_id)
     db.set_user_state(user_id, "main_menu")
     bot.send_message(
@@ -975,6 +1134,9 @@ def stop_chat(message):
 @bot.message_handler(func=lambda msg: msg.text == "👤 مشاهده پروفایل")
 def view_partner_profile(message):
     user_id = message.chat.id
+    if enforce_channel_membership(user_id):
+        return
+
     user = db.get_user(user_id)
     if not user or user.get("status") != "chatting" or not user.get("partner_id"):
         return
@@ -997,6 +1159,9 @@ def view_partner_profile(message):
 @bot.message_handler(func=lambda msg: msg.text == "🔗 اشتراک‌گذاری آیدی")
 def request_share_id(message):
     user_id = message.chat.id
+    if enforce_channel_membership(user_id):
+        return
+
     user = db.get_user(user_id)
     if not user or user.get("status") != "chatting" or not user.get("partner_id"):
         return
@@ -1059,6 +1224,9 @@ def request_share_id(message):
 @bot.message_handler(func=lambda msg: msg.text == "💣 ارسال عکس تایم‌دار")
 def prompt_timed_photo(message):
     user_id = message.chat.id
+    if enforce_channel_membership(user_id):
+        return
+
     user = db.get_user(user_id)
     if not user or user.get("status") != "chatting":
         return
@@ -1081,6 +1249,9 @@ def delete_timed_message(chat_id, message_id, delay=10):
 @bot.message_handler(func=lambda msg: msg.text == "⚠️ گزارش تخلف")
 def report_partner(message):
     user_id = message.chat.id
+    if enforce_channel_membership(user_id):
+        return
+
     user = db.get_user(user_id)
     if not user or user.get("status") != "chatting" or not user.get("partner_id"):
         return
@@ -1104,7 +1275,7 @@ def report_partner(message):
             pass
 
 
-# --- موتور هدایت پیام‌های چت + کنترل ثبت‌نام اجباری + پاسخ «متوجه نشدم» ---
+# --- موتور هدایت پیام‌های چت + چک کانال + پاسخ «متوجه نشدم» ---
 @bot.message_handler(
     content_types=[
         "text",
@@ -1118,8 +1289,10 @@ def report_partner(message):
 )
 def relay_all_chat_messages(message):
     user_id = message.chat.id
-    user = db.get_user(user_id)
+    if enforce_channel_membership(user_id):
+        return
 
+    user = db.get_user(user_id)
     if enforce_registration_step(user_id, user):
         return
 
