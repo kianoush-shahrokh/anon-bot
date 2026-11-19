@@ -147,8 +147,11 @@ def is_profile_complete(u):
     )
 
 
-def enforce_registration_step(user_id, u):
-    """بررسی اجباری تکمیل تمام ۵ فیلد: نام، جنسیت، سن، استان و شهر"""
+def enforce_registration_step(user_id, u=None):
+    """بررسی اجباری تکمیل تمام فیلدهای نام، جنسیت، سن، استان و شهر"""
+    if u is None:
+        u = db.get_user(user_id)
+
     if not u:
         db.add_or_update_user(user_id, state="reg_name")
         u = db.get_user(user_id)
@@ -158,13 +161,12 @@ def enforce_registration_step(user_id, u):
         USER_CONTEXT[user_id] = "reg_waiting_name"
         bot.send_message(
             user_id,
-            "📝 مرحله ۱ از ۵ (اجباری):\nنام قشنگت رو برام بنویس:",
+            "📝 مرحله ۱ از ۵ (اجباری):\nابتدا نام قشنگت رو برام بنویس:",
             reply_markup=types.ReplyKeyboardRemove(),
         )
         return True
 
     if str(u.get("gender") or "").strip() not in ["پسر", "دختر"]:
-        USER_CONTEXT.pop(user_id, None)
         db.set_user_state(user_id, "reg_gender")
         bot.send_message(
             user_id,
@@ -174,31 +176,28 @@ def enforce_registration_step(user_id, u):
         return True
 
     if not u.get("age") or int(u.get("age") or 0) <= 0:
-        USER_CONTEXT.pop(user_id, None)
         db.set_user_state(user_id, "reg_age_range")
         bot.send_message(
             user_id,
-            "📝 مرحله ۳ از ۵ (اجباری):\nبازه سنی خودت رو از دکمه‌های پایین انتخاب کن:",
+            "📝 مرحله ۳ از ۵ (اجباری):\nبازه سنی خودت رو از کیبورد پایین انتخاب کن:",
             reply_markup=kb.age_ranges_keyboard(allow_back=False),
         )
         return True
 
     if not str(u.get("province") or "").strip():
-        USER_CONTEXT.pop(user_id, None)
         db.set_user_state(user_id, "reg_province")
         bot.send_message(
             user_id,
-            "📝 مرحله ۴ از ۵ (اجباری):\nاستان محل سکونتت رو از دکمه‌های پایین انتخاب کن:",
+            "📝 مرحله ۴ از ۵ (اجباری):\nاستان محل سکونتت رو از کیبورد پایین انتخاب کن:",
             reply_markup=kb.provinces_keyboard(allow_back=False),
         )
         return True
 
     if not str(u.get("city") or "").strip():
-        USER_CONTEXT.pop(user_id, None)
         db.set_user_state(user_id, f"reg_city_{u['province']}")
         bot.send_message(
             user_id,
-            f"📝 مرحله ۵ از ۵ (اجباری):\nشهر خودت در {u['province']} رو از دکمه‌های پایین انتخاب کن:",
+            f"📝 مرحله ۵ از ۵ (اجباری):\nشهر خودت در {u['province']} رو از کیبورد پایین انتخاب کن:",
             reply_markup=kb.cities_keyboard(u["province"], allow_back=False),
         )
         return True
@@ -307,7 +306,7 @@ def send_single_logged_media_to_admin(admin_id, log_row):
         if "wrong file identifier" in str(e):
             bot.send_message(
                 admin_id,
-                "⚠️ این فایل مربوط به نسخه قبلی ربات است و به دلیل تغییر توکن ربات قابل نمایش نیست.",
+                "⚠️ این فایل در نسخه قبلی ربات ارسال شده است و با توکن فعلی قابل باز کردن نیست.",
             )
         else:
             bot.send_message(admin_id, f"⚠️ خطا در باز کردن فایل: {e}")
@@ -1177,9 +1176,6 @@ def handle_back_button(message):
         return
 
     user = db.get_user(user_id)
-    if not user:
-        return
-
     if enforce_registration_step(user_id, user):
         return
 
@@ -1223,7 +1219,13 @@ def handle_back_button(message):
 
 # --- ثبت نام اجباری (مرحله ۱: وارد کردن نام) ---
 @bot.message_handler(
-    func=lambda msg: USER_CONTEXT.get(msg.chat.id) == "reg_waiting_name"
+    func=lambda msg: (
+        USER_CONTEXT.get(msg.chat.id) == "reg_waiting_name"
+        or (
+            db.get_user(msg.chat.id) is not None
+            and not str(db.get_user(msg.chat.id).get("name") or "").strip()
+        )
+    )
     and msg.text
     and not msg.text.startswith("/")
 )
@@ -1297,10 +1299,10 @@ def set_age_range(message):
     }
     s, e = mapping[message.text]
     allow_b = is_profile_complete(user)
-    db.set_user_state(user_id, "select_specific_age" if allow_b else "reg_specific_age")
+    db.set_user_state(user_id, "select_specific_age")
     bot.send_message(
         user_id,
-        "سن دقیق خودت رو از دکمه‌های پایین انتخاب کن:",
+        "سن دقیق خودت رو از کیبورد پایین انتخاب کن:",
         reply_markup=kb.specific_ages_keyboard(s, e, allow_back=allow_b),
     )
 
@@ -1337,13 +1339,13 @@ def set_province(message):
         return
 
     prov = message.text.strip()
-    db.add_or_update_user(user_id, province=prov)
+    db.add_or_update_user(user_id, province=prov, city=None)
     user = db.get_user(user_id)
     allow_b = is_profile_complete(user)
-    db.set_user_state(user_id, f"select_city_{prov}" if allow_b else f"reg_city_{prov}")
+    db.set_user_state(user_id, f"select_city_{prov}")
     bot.send_message(
         user_id,
-        f"شهر خودت در {prov} رو از دکمه‌های پایین انتخاب کن:",
+        f"شهر خودت در {prov} رو از کیبورد پایین انتخاب کن:",
         reply_markup=kb.cities_keyboard(prov, allow_back=allow_b),
     )
 
@@ -1358,7 +1360,7 @@ def set_city(message):
     db.add_or_update_user(user_id, city=city_name)
     user = db.get_user(user_id)
 
-    # اول مطمئن می‌شویم هر ۵ فیلد اجباری پر شده باشند
+    # اگر هنوز هرکدام از ۵ فیلد اصلی ناقص است، کاربر را به همان مرحله اجباری بفرست
     if enforce_registration_step(user_id, user):
         return
 
@@ -1434,8 +1436,11 @@ def set_photo_preference(message):
         )
         return
 
-    db.set_user_state(user_id, "main_menu")
     user = db.get_user(user_id)
+    if enforce_registration_step(user_id, user):
+        return
+
+    db.set_user_state(user_id, "main_menu")
     send_profile_card_with_photo(
         user_id,
         user,
@@ -1458,7 +1463,6 @@ def receive_custom_avatar(message):
     db.add_or_update_user(user_id, photo_file_id=fid)
     USER_CONTEXT.pop(user_id, None)
     user = db.get_user(user_id)
-
     if enforce_registration_step(user_id, user):
         return
 
@@ -1696,9 +1700,6 @@ def ask_confirm_stop_chat(message):
 def cancel_stop_chat(message):
     user_id = message.chat.id
     user = db.get_user(user_id)
-    if enforce_registration_step(user_id, user):
-        return
-
     if user and user.get("status") == "chatting":
         bot.send_message(
             user_id,
@@ -1738,9 +1739,6 @@ def view_partner_profile(message):
         return
 
     user = db.get_user(user_id)
-    if enforce_registration_step(user_id, user):
-        return
-
     if not user or user.get("status") != "chatting" or not user.get("partner_id"):
         return
 
@@ -1767,9 +1765,6 @@ def request_share_id(message):
         return
 
     user = db.get_user(user_id)
-    if enforce_registration_step(user_id, user):
-        return
-
     if not user or user.get("status") != "chatting" or not user.get("partner_id"):
         return
 
@@ -1835,9 +1830,6 @@ def prompt_timed_photo_duration(message):
         return
 
     user = db.get_user(user_id)
-    if enforce_registration_step(user_id, user):
-        return
-
     if not user or user.get("status") != "chatting":
         return
     USER_CONTEXT[user_id] = "choosing_timed_photo_seconds"
@@ -1913,9 +1905,6 @@ def report_partner(message):
         return
 
     user = db.get_user(user_id)
-    if enforce_registration_step(user_id, user):
-        return
-
     if not user or user.get("status") != "chatting" or not user.get("partner_id"):
         return
 
