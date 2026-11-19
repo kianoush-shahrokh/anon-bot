@@ -9,7 +9,6 @@ from psycopg2.extras import RealDictCursor
 load_dotenv()
 DATABASE_URL = os.getenv("DATABASE_URL")
 
-# ایجاد استخر اتصال (Connection Pool) برای سرعت فوق‌العاده بالا و حذف تاخیر
 db_pool = psycopg2.pool.ThreadedConnectionPool(1, 20, DATABASE_URL)
 
 
@@ -30,7 +29,6 @@ def init_db():
     conn = get_conn()
     try:
         cur = conn.cursor()
-        # جدول اصلی کاربران
         cur.execute("""
             CREATE TABLE IF NOT EXISTS anon_users (
                 user_id BIGINT PRIMARY KEY,
@@ -65,7 +63,6 @@ def init_db():
         for q in alter_queries:
             cur.execute(q)
 
-        # جدول گزارش تخلف کاربران (برای شمارش ۴ گزارش یکتا)
         cur.execute("""
             CREATE TABLE IF NOT EXISTS user_reports (
                 reporter_id BIGINT,
@@ -75,7 +72,6 @@ def init_db():
             );
         """)
 
-        # جدول لاگ تمام چت‌ها و عکس‌ها برای ادمین
         cur.execute("""
             CREATE TABLE IF NOT EXISTS chat_logs (
                 id SERIAL PRIMARY KEY,
@@ -184,7 +180,6 @@ def set_user_state(user_id, new_state):
 
 
 def toggle_private_mode(user_id):
-    """تغییر وضعیت چت خصوصی (ضداسکرین‌شات/ضدذخیره) و برگرداندن وضعیت جدید (True/False)"""
     conn = get_conn()
     try:
         cur = conn.cursor()
@@ -414,8 +409,6 @@ def get_all_user_ids():
     finally:
         put_conn(conn)
 
-
-# ==================== توابع خواندنی پنل مدیریت ادمین ====================
 
 def get_bot_stats():
     conn = get_conn()

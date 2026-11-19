@@ -144,13 +144,17 @@ def is_profile_complete(u):
 
 
 def enforce_registration_step(user_id, u):
+    """بررسی اجباری تکمیل تمام فیلدهای نام، جنسیت، سن، استان و شهر"""
+    if not u:
+        db.add_or_update_user(user_id, state="reg_name")
+        u = db.get_user(user_id)
+
     if not u or not u.get("name"):
         db.set_user_state(user_id, "reg_name")
         USER_CONTEXT[user_id] = "reg_waiting_name"
         bot.send_message(
             user_id,
-            "برای شروع و آشنایی بیشتر، اول **نام** قشنگت رو برام بنویس (اجباری):",
-            parse_mode="Markdown",
+            "📝 تکمیل مشخصات اجباری است!\nابتدا نام قشنگت رو برام بنویس:",
             reply_markup=types.ReplyKeyboardRemove(),
         )
         return True
@@ -159,8 +163,7 @@ def enforce_registration_step(user_id, u):
         db.set_user_state(user_id, "reg_gender")
         bot.send_message(
             user_id,
-            "حالا **جنسیت** خودت رو از دکمه‌های پایین انتخاب کن (اجباری):",
-            parse_mode="Markdown",
+            "📝 مرحله ۲ از ۵ (اجباری):\nجنسیت خودت رو از دکمه‌های پایین انتخاب کن:",
             reply_markup=kb.gender_keyboard(allow_back=False),
         )
         return True
@@ -169,8 +172,7 @@ def enforce_registration_step(user_id, u):
         db.set_user_state(user_id, "reg_age_range")
         bot.send_message(
             user_id,
-            "بازه **سنی** خودت رو انتخاب کن (اجباری):",
-            parse_mode="Markdown",
+            "📝 مرحله ۳ از ۵ (اجباری):\nبازه سنی خودت رو انتخاب کن:",
             reply_markup=kb.age_ranges_keyboard(allow_back=False),
         )
         return True
@@ -179,8 +181,7 @@ def enforce_registration_step(user_id, u):
         db.set_user_state(user_id, "reg_province")
         bot.send_message(
             user_id,
-            "**استان** محل سکونتت رو انتخاب کن (اجباری):",
-            parse_mode="Markdown",
+            "📝 مرحله ۴ از ۵ (اجباری):\nاستان محل سکونتت رو انتخاب کن:",
             reply_markup=kb.provinces_keyboard(allow_back=False),
         )
         return True
@@ -189,8 +190,7 @@ def enforce_registration_step(user_id, u):
         db.set_user_state(user_id, f"reg_city_{u['province']}")
         bot.send_message(
             user_id,
-            f"**شهر** خودت در {u['province']} رو انتخاب کن (اجباری):",
-            parse_mode="Markdown",
+            f"📝 مرحله ۵ از ۵ (اجباری):\nشهر خودت در {u['province']} رو انتخاب کن:",
             reply_markup=kb.cities_keyboard(u["province"], allow_back=False),
         )
         return True
@@ -339,8 +339,7 @@ def launch_user_session(user_id):
         )
         bot.send_message(
             user_id,
-            "🚀 ربات برات فعال شد! برای شروع، همین الان **نام** قشنگت رو برام بنویس (تکمیل نام، جنسیت و موقعیت اجباریه):",
-            parse_mode="Markdown",
+            "🚀 ربات برات فعال شد!\n📝 مرحله ۱ از ۵ (اجباری): نام قشنگت رو برام بنویس:",
             reply_markup=types.ReplyKeyboardRemove(),
         )
         return
@@ -399,12 +398,12 @@ def toggle_private_chat_setting(message):
 
     if new_state:
         info_txt = (
-            "🔒 **حالت چت خصوصی روشن شد!**\n"
-            "✅ از این لحظه به بعد، تمام پیام‌ها، عکس‌ها، ویدیوها و ویس‌های چت شما محافظت می‌شوند و امکان **اسکرین‌شات، فوروارد و ذخیره** غیرفعال خواهد بود."
+            "🔒 حالت چت خصوصی روشن شد!\n"
+            "✅ از این لحظه به بعد، تمام پیام‌ها، عکس‌ها، ویدیوها و ویس‌های چت شما محافظت می‌شوند و امکان اسکرین‌شات، فوروارد و ذخیره غیرفعال خواهد بود."
         )
     else:
         info_txt = (
-            "🔓 **حالت چت خصوصی خاموش شد.**\n"
+            "🔓 حالت چت خصوصی خاموش شد.\n"
             "پیام‌ها به صورت عادی ارسال می‌شوند (مگر اینکه طرف مقابل چت خصوصی را روشن کرده باشد)."
         )
 
@@ -412,27 +411,23 @@ def toggle_private_chat_setting(message):
         bot.send_message(
             user_id,
             info_txt,
-            parse_mode="Markdown",
             reply_markup=get_chat_kb(user_id),
         )
         partner_id = user.get("partner_id")
         if partner_id:
             try:
                 status_notif = (
-                    "🔒 هم‌صحبت شما **چت خصوصی** را روشن کرد (امکان اسکرین‌شات و فوروارد غیرفعال شد)."
+                    "🔒 هم‌صحبت شما چت خصوصی را روشن کرد (امکان اسکرین‌شات و فوروارد غیرفعال شد)."
                     if new_state
-                    else "🔓 هم‌صحبت شما **چت خصوصی** را خاموش کرد."
+                    else "🔓 هم‌صحبت شما چت خصوصی را خاموش کرد."
                 )
-                bot.send_message(
-                    partner_id, status_notif, parse_mode="Markdown"
-                )
+                bot.send_message(partner_id, status_notif)
             except Exception:
                 pass
     else:
         bot.send_message(
             user_id,
             info_txt,
-            parse_mode="Markdown",
             reply_markup=get_main_kb(user_id),
         )
 
@@ -681,6 +676,9 @@ def open_admin_panel(message):
 def exit_admin_panel(message):
     uid = message.chat.id
     USER_CONTEXT.pop(uid, None)
+    user = db.get_user(uid)
+    if enforce_registration_step(uid, user):
+        return
     db.set_user_state(uid, "main_menu")
     send_main_menu_with_link(uid)
 
@@ -819,18 +817,19 @@ def admin_select_user_from_kb(message):
         return
 
     USER_CONTEXT[f"admin_selected_u1_{uid}"] = target["user_id"]
+    name = target.get("name") or "ناشناس"
+    custom_id = target.get("custom_id") or str(target["user_id"])
     bot.send_message(
         uid,
-        f"👤 کاربر انتخاب‌شده: **{target.get('name') or 'ناشناس'}** (`/{target.get('custom_id')}`)\n"
+        f"👤 کاربر انتخاب‌شده: {name} (/{custom_id})\n"
         f"کدام بخش را می‌خواهید ببینید؟",
-        parse_mode="Markdown",
-        reply_markup=kb.admin_user_choice_kb(),
+        reply_markup=kb.admin_user_action_kb(),
     )
 
 
 @bot.message_handler(
     func=lambda msg: is_admin(msg.chat.id)
-    and msg.text == "🔙 بازگشت به گزینه‌های کاربر"
+    and msg.text == "🔙 بازگشت به انتخاب کاربر"
 )
 def admin_back_to_user_choice(message):
     uid = message.chat.id
@@ -839,13 +838,12 @@ def admin_back_to_user_choice(message):
         admin_show_all_users(message)
         return
     target = db.get_user(u1_id)
-    name = target.get("name") if target else str(u1_id)
-    cid = target.get("custom_id") if target else str(u1_id)
+    name = (target.get("name") if target else None) or str(u1_id)
+    cid = (target.get("custom_id") if target else None) or str(u1_id)
     bot.send_message(
         uid,
-        f"👤 کاربر انتخاب‌شده: **{name}** (`/{cid}`)\nکدام بخش را می‌خواهید ببینید؟",
-        parse_mode="Markdown",
-        reply_markup=kb.admin_user_choice_kb(),
+        f"👤 کاربر انتخاب‌شده: {name} (/{cid})\nکدام بخش را می‌خواهید ببینید؟",
+        reply_markup=kb.admin_user_action_kb(),
     )
 
 
@@ -871,13 +869,13 @@ def admin_show_u1_profile(message):
 
     caption = format_profile_caption(target, "👤 پروفایل و مشخصات کاربر:")
     send_profile_card_with_photo(
-        uid, target, caption, reply_markup=kb.admin_user_choice_kb()
+        uid, target, caption, reply_markup=kb.admin_user_action_kb()
     )
 
 
 @bot.message_handler(
     func=lambda msg: is_admin(msg.chat.id)
-    and msg.text in ["💬 چت‌هایش با افراد", "🔙 بازگشت به لیست هم‌صحبت‌ها"]
+    and msg.text in ["💬 چت‌هایش با افراد", "🔙 بازگشت به هم‌صحبت‌ها"]
 )
 def admin_show_u1_partners(message):
     uid = message.chat.id
@@ -897,14 +895,14 @@ def admin_show_u1_partners(message):
         bot.send_message(
             uid,
             f"👤 کاربر «{target.get('name')}» (/{target.get('custom_id')}) تا به حال با هیچ‌کس چت نکرده است.",
-            reply_markup=kb.admin_user_choice_kb(),
+            reply_markup=kb.admin_user_action_kb(),
         )
         return
 
     bot.send_message(
         uid,
         f"👤 کاربر: {target.get('name')} (/{target.get('custom_id')})\n"
-        f"👇 با این {len(partners)} نفر چت کرده است (روی هر نفر بزنید تا پروفایل یا چت‌هایش را انتخاب کنید):",
+        f"👇 با این {len(partners)} نفر چت کرده است (روی هر نفر بزنید تا پروفایل یا چت‌هایشان را انتخاب کنید):",
         reply_markup=kb.admin_partners_reply_kb(partners),
     )
 
@@ -934,10 +932,9 @@ def admin_select_partner_from_kb(message):
     USER_CONTEXT[f"admin_selected_u2_{uid}"] = u2_id
     bot.send_message(
         uid,
-        f"💬 هم‌صحبت انتخاب‌شده: **{u2_name}** (`/{cid2}`)\n"
-        f"می‌خواهید پروفایل این هم‌صحبت را ببینید یا چت‌های بین این دو نفر را؟",
-        parse_mode="Markdown",
-        reply_markup=kb.admin_partner_choice_kb(),
+        f"💬 هم‌صحبت انتخاب‌شده: {u2_name} (/{cid2})\n"
+        f"می‌خواهید پروفایل این هم‌صحبت را ببینید یا چت‌هایشان را؟",
+        reply_markup=kb.admin_partner_action_kb(),
     )
 
 
@@ -961,19 +958,19 @@ def admin_show_u2_profile(message):
         bot.send_message(
             uid,
             f"❌ مشخصات این کاربر ({u2_id}) در دیتابیس یافت نشد.",
-            reply_markup=kb.admin_partner_choice_kb(),
+            reply_markup=kb.admin_partner_action_kb(),
         )
         return
 
     caption = format_profile_caption(target2, "👤 پروفایل و مشخصات هم‌صحبت:")
     send_profile_card_with_photo(
-        uid, target2, caption, reply_markup=kb.admin_partner_choice_kb()
+        uid, target2, caption, reply_markup=kb.admin_partner_action_kb()
     )
 
 
 @bot.message_handler(
     func=lambda msg: is_admin(msg.chat.id)
-    and msg.text == "📜 مشاهده چت‌های این دو نفر"
+    and msg.text == "📜 مشاهده چت‌هایشان"
 )
 def admin_show_u1_u2_chats(message):
     uid = message.chat.id
@@ -995,7 +992,7 @@ def admin_show_u1_u2_chats(message):
         bot.send_message(
             uid,
             "هیچ پیامی بین این دو نفر یافت نشد.",
-            reply_markup=kb.admin_partner_choice_kb(),
+            reply_markup=kb.admin_partner_action_kb(),
         )
         return
 
@@ -1055,7 +1052,7 @@ def admin_show_u1_u2_chats(message):
             final_text[i : i + 3800],
             parse_mode="HTML",
             disable_web_page_preview=True,
-            reply_markup=kb.admin_partner_choice_kb(),
+            reply_markup=kb.admin_partner_action_kb(),
         )
 
 
@@ -1603,9 +1600,8 @@ def start_filtered_search(message):
             bot.send_message(
                 user_id,
                 f"⏳ سهمیه ۵ بار جستجوی دختر در این ساعت تمام شده است!\n"
-                f"🔄 حدود **{rem_mins} دقیقه** دیگر سهمیه شما دوباره تمدید می‌شود.\n"
+                f"🔄 حدود {rem_mins} دقیقه دیگر سهمیه شما دوباره تمدید می‌شود.\n"
                 f"فعلاً می‌تونی از «🎲 جستجوی شانسی» استفاده کنی.",
-                parse_mode="Markdown",
                 reply_markup=kb.connect_filter_keyboard(),
             )
             return
@@ -1831,8 +1827,7 @@ def set_timed_photo_duration(message):
     USER_CONTEXT[user_id] = f"waiting_for_timed_photo_{chosen_sec}"
     bot.send_message(
         user_id,
-        f"💣 عالی! حالا عکس خودت رو بفرست تا به مدت **{chosen_sec} ثانیه** (ضداسکرین‌شات و محوشونده) ارسال بشه:",
-        parse_mode="Markdown",
+        f"💣 عالی! حالا عکس خودت رو بفرست تا به مدت {chosen_sec} ثانیه (ضداسکرین‌شات و محوشونده) ارسال بشه:",
         reply_markup=get_chat_kb(user_id),
     )
 
