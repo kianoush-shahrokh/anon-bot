@@ -29,15 +29,18 @@ DEFAULT_BOY_AVATAR = "https://cdn-icons-png.flaticon.com/512/4140/4140048.png"
 DEFAULT_GIRL_AVATAR = "https://cdn-icons-png.flaticon.com/512/4140/4140047.png"
 
 
-def get_admin_id():
-    raw = os.getenv("ADMIN_ID", "0")
-    digits = re.sub(r"\D", "", str(raw))
-    return int(digits) if digits else 0
+def get_admin_ids():
+    raw = os.getenv("ADMIN_ID", "")
+    ids = []
+    for part in str(raw).split(","):
+        digits = re.sub(r"\D", "", part)
+        if digits and int(digits) != 0:
+            ids.append(int(digits))
+    return ids
 
 
 def is_admin(user_id):
-    aid = get_admin_id()
-    return aid != 0 and int(user_id) == aid
+    return int(user_id) in get_admin_ids()
 
 
 def get_main_kb(user_id):
@@ -1622,7 +1625,7 @@ def delete_timed_messages_both_sides(
                 pass
 
 
-# --- گزارش تخلف (ارسال هشدار مسدودسازی به مدیر پس از رسیدن به ۴ گزارش) ---
+# --- گزارش تخلف (ارسال هشدار مسدودسازی به همه مدیران پس از رسیدن به ۴ گزارش) ---
 @bot.message_handler(func=lambda msg: msg.text == "⚠️ گزارش تخلف")
 def report_partner(message):
     user_id = message.chat.id
@@ -1647,8 +1650,8 @@ def report_partner(message):
         user_id, "✅ گزارش تخلف شما ثبت شد و در سیستم بررسی می‌شود."
     )
 
-    aid = get_admin_id()
-    if aid != 0 and total_reports >= 4:
+    admin_list = get_admin_ids()
+    if admin_list and total_reports >= 4:
         markup = types.InlineKeyboardMarkup(row_width=2)
         markup.add(
             types.InlineKeyboardButton(
@@ -1664,12 +1667,13 @@ def report_partner(message):
             f"تاکنون توسط <b>{total_reports} نفر</b> گزارش شده است!\n\n"
             f"آیا مایل به مسدودسازی این کاربر هستید؟"
         )
-        try:
-            bot.send_message(
-                aid, report_text, parse_mode="HTML", reply_markup=markup
-            )
-        except Exception:
-            pass
+        for aid in admin_list:
+            try:
+                bot.send_message(
+                    aid, report_text, parse_mode="HTML", reply_markup=markup
+                )
+            except Exception:
+                pass
 
 
 # --- موتور هدایت پیام‌های چت (با قفل کامل ضداسکرین‌شات و ضدذخیره روی تمام پیام‌ها و مدیاها) ---
