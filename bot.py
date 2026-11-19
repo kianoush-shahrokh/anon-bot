@@ -43,13 +43,34 @@ def is_admin(user_id):
     return int(user_id) in get_admin_ids()
 
 
+def is_private_enabled(user_id):
+    u = db.get_user(user_id)
+    return bool(u.get("private_chat")) if u else False
+
+
+def is_chat_protected(user1_id, user2_id):
+    return is_private_enabled(user1_id) or is_private_enabled(user2_id)
+
+
 def get_main_kb(user_id):
-    return kb.main_menu_keyboard(is_admin=is_admin(user_id))
+    return kb.main_menu_keyboard(
+        is_admin=is_admin(user_id),
+        private_mode=is_private_enabled(user_id),
+    )
+
+
+def get_chat_kb(user_id):
+    return kb.chatting_keyboard(private_mode=is_private_enabled(user_id))
 
 
 def send_main_menu_with_link(user_id, custom_intro=None):
     user = db.get_user(user_id)
     name = (user.get("name") if user else "") or "رفیق"
+    priv_status = (
+        "روشن 🔒 (ضداسکرین‌شات و ضدذخیره فعال)"
+        if (user and user.get("private_chat"))
+        else "خاموش 🔓"
+    )
     intro = custom_intro or (
         f"سلام {name} جان! خوش اومدی به منوی اصلی 🌟\n"
         f"برای شروع یک گفتگوی ناشناس جذاب، از دکمه‌های پایین انتخاب کن 👇"
@@ -62,7 +83,9 @@ def send_main_menu_with_link(user_id, custom_intro=None):
     )
     bot.send_message(
         user_id,
-        f"{intro}\n\n🔗 کانال رسمی ما: {REQUIRED_CHANNEL_LINK}",
+        f"{intro}\n\n"
+        f"🛡 وضعیت چت خصوصی شما: {priv_status}\n"
+        f"🔗 کانال رسمی ما: {REQUIRED_CHANNEL_LINK}",
         reply_markup=get_main_kb(user_id),
         disable_web_page_preview=True,
     )
@@ -276,6 +299,66 @@ def send_single_logged_media_to_admin(admin_id, log_row):
         bot.send_message(admin_id, f"⚠️ خطا در باز کردن فایل: {e}")
 
 
+def launch_user_session(user_id):
+    """شروع خودکار ربات بعد از استارت یا تایید کانال بدون نیاز به استارت مجدد"""
+    USER_CONTEXT.pop(user_id, None)
+    user = db.get_user(user_id)
+
+    if user and user.get("is_banned"):
+        bot.send_message(user_id, "🚫 حساب کاربری شما توسط مدیریت مسدود شده است.")
+        return
+
+    initial_photo = None
+    try:
+        photos = bot.get_user_profile_photos(user_id, limit=1)
+        if photos.total_count > 0:
+            initial_photo = photos.photos[0][-1].file_id
+    except Exception:
+        pass
+
+    if not user:
+        db.add_or_update_user(
+            user_id,
+            photo_file_id=initial_photo,
+            state="reg_name",
+        )
+        USER_CONTEXT[user_id] = "reg_waiting_name"
+        welcome_markup = types.InlineKeyboardMarkup()
+        welcome_markup.add(
+            types.InlineKeyboardButton(
+                "📢 کانال رسمی ربات", url=REQUIRED_CHANNEL_LINK
+            )
+        )
+        bot.send_message(
+            user_id,
+            "سلام رفیق! خیلی خوش اومدی به جمع صمیمی ما 🎭✨\n"
+            "اینجا می‌تونی با کلی آدم جدید و باحال به‌صورت کاملاً ناشناس گپ بزنی و دوستای جدید پیدا کنی.\n\n"
+            f"🔗 کانال رسمی و اطلاعیه‌های ما:\n{REQUIRED_CHANNEL_LINK}",
+            reply_markup=welcome_markup,
+            disable_web_page_preview=True,
+        )
+        bot.send_message(
+            user_id,
+            "🚀 ربات برات فعال شد! برای شروع، همین الان **نام** قشنگت رو برام بنویس (تکمیل نام، جنسیت و موقعیت اجباریه):",
+            parse_mode="Markdown",
+            reply_markup=types.ReplyKeyboardRemove(),
+        )
+        return
+
+    if not user.get("photo_file_id") and initial_photo:
+        db.add_or_update_user(user_id, photo_file_id=initial_photo)
+
+    if enforce_registration_step(user_id, user):
+        return
+
+    db.set_user_state(user_id, "main_menu")
+    send_main_menu_with_link(
+        user_id,
+        f"سلام {user.get('name')} جان! خیلی خوش اومدی 🌟\n"
+        "ربات آماده‌ست، از منوی پایین انتخاب کن 👇",
+    )
+
+
 # --- تایید عضویت در کانال از طریق دکمه شیشه‌ای ---
 @bot.callback_query_handler(func=lambda call: call.data == "check_channel_join")
 def callback_check_channel_join(call):
@@ -288,37 +371,70 @@ def callback_check_channel_join(call):
         )
         return
 
-    bot.answer_callback_query(call.id, "✅ عضویتت تایید شد! خوش اومدی 🌟")
+    bot.answer_callback_query(call.id, "✅ عضویتت تایید شد! ربات فعال شد 🌟")
     try:
         bot.delete_message(call.message.chat.id, call.message.message_id)
     except Exception:
         pass
 
-    user = db.get_user(uid)
-    if not user:
-        db.add_or_update_user(uid, state="reg_name")
-        USER_CONTEXT[uid] = "reg_waiting_name"
-        bot.send_message(
-            uid,
-            "سلام رفیق! خیلی خوش اومدی به جمع ما 🎭✨\n"
-            f"اینجا می‌تونی با کلی آدم جدید و باحال به‌صورت کاملاً ناشناس گپ بزنی.\n"
-            f"🔗 کانال رسمی ما: {REQUIRED_CHANNEL_LINK}\n\n"
-            "برای شروع، اول **نام** قشنگت رو برام بنویس (تکمیل نام، جنسیت و موقعیت اجباریه):",
-            parse_mode="Markdown",
-            reply_markup=types.ReplyKeyboardRemove(),
-            disable_web_page_preview=True,
+    launch_user_session(uid)
+
+
+# --- دکمه تنظیمات چت خصوصی (روشن / خاموش کردن قفل ضداسکرین‌شات و ضدذخیره) ---
+@bot.message_handler(
+    func=lambda msg: msg.text
+    in ["🔒 چت خصوصی: روشن ✅", "🔓 چت خصوصی: خاموش ❌"]
+)
+def toggle_private_chat_setting(message):
+    user_id = message.chat.id
+    if enforce_channel_membership(user_id):
+        return
+
+    user = db.get_user(user_id)
+    if enforce_registration_step(user_id, user):
+        return
+
+    new_state = db.toggle_private_mode(user_id)
+    user = db.get_user(user_id)
+
+    if new_state:
+        info_txt = (
+            "🔒 **حالت چت خصوصی روشن شد!**\n"
+            "✅ از این لحظه به بعد، تمام پیام‌ها، عکس‌ها، ویدیوها و ویس‌های چت شما محافظت می‌شوند و امکان **اسکرین‌شات، فوروارد و ذخیره** غیرفعال خواهد بود."
         )
-        return
+    else:
+        info_txt = (
+            "🔓 **حالت چت خصوصی خاموش شد.**\n"
+            "پیام‌ها به صورت عادی ارسال می‌شوند (مگر اینکه طرف مقابل چت خصوصی را روشن کرده باشد)."
+        )
 
-    if enforce_registration_step(uid, user):
-        return
-
-    db.set_user_state(uid, "main_menu")
-    send_main_menu_with_link(
-        uid,
-        f"سلام {user.get('name')} جان! خوش برگشتی 🌟\n"
-        "همه‌چیز آماده‌ست، از منوی پایین انتخاب کن 👇",
-    )
+    if user and user.get("status") == "chatting":
+        bot.send_message(
+            user_id,
+            info_txt,
+            parse_mode="Markdown",
+            reply_markup=get_chat_kb(user_id),
+        )
+        partner_id = user.get("partner_id")
+        if partner_id:
+            try:
+                status_notif = (
+                    "🔒 هم‌صحبت شما **چت خصوصی** را روشن کرد (امکان اسکرین‌شات و فوروارد غیرفعال شد)."
+                    if new_state
+                    else "🔓 هم‌صحبت شما **چت خصوصی** را خاموش کرد."
+                )
+                bot.send_message(
+                    partner_id, status_notif, parse_mode="Markdown"
+                )
+            except Exception:
+                pass
+    else:
+        bot.send_message(
+            user_id,
+            info_txt,
+            parse_mode="Markdown",
+            reply_markup=get_main_kb(user_id),
+        )
 
 
 # --- دکمه‌های شیشه‌ای دعوت‌نامه مدیر به کاربر و مسدودسازی گزارش‌ها ---
@@ -467,14 +583,13 @@ def handle_user_admin_invite_response(call):
 
         bot.send_message(
             uid,
-            "✨ گفتگو با مدیریت برقرار شد! می‌توانید پیام خود را ارسال کنید 👇\n"
-            "🔒 (حالت محافظت محتوا فعال است؛ امکان اسکرین‌شات و فوروارد وجود ندارد)",
-            reply_markup=kb.chatting_keyboard(),
+            "✨ گفتگو با مدیریت برقرار شد! می‌توانید پیام خود را ارسال کنید 👇",
+            reply_markup=get_chat_kb(uid),
         )
         bot.send_message(
             admin_id,
             f"🎉 کاربر «{user.get('name') if user else uid}» (/{user.get('custom_id') if user else uid}) دعوت شما را پذیرفت و چت مستقیم برقرار شد! 👇",
-            reply_markup=kb.chatting_keyboard(),
+            reply_markup=get_chat_kb(admin_id),
         )
 
 
@@ -538,62 +653,7 @@ def handle_start(message):
     if enforce_channel_membership(user_id):
         return
 
-    USER_CONTEXT.pop(user_id, None)
-    user = db.get_user(user_id)
-
-    if user and user.get("is_banned"):
-        bot.send_message(user_id, "🚫 حساب کاربری شما توسط مدیریت مسدود شده است.")
-        return
-
-    initial_photo = None
-    try:
-        photos = bot.get_user_profile_photos(user_id, limit=1)
-        if photos.total_count > 0:
-            initial_photo = photos.photos[0][-1].file_id
-    except Exception:
-        pass
-
-    if not user:
-        db.add_or_update_user(
-            user_id,
-            photo_file_id=initial_photo,
-            state="reg_name",
-        )
-        USER_CONTEXT[user_id] = "reg_waiting_name"
-        welcome_markup = types.InlineKeyboardMarkup()
-        welcome_markup.add(
-            types.InlineKeyboardButton(
-                "📢 کانال رسمی ربات", url=REQUIRED_CHANNEL_LINK
-            )
-        )
-        bot.send_message(
-            user_id,
-            "سلام رفیق! خیلی خوش اومدی به جمع صمیمی ما 🎭✨\n"
-            "اینجا می‌تونی با کلی آدم جدید و باحال به‌صورت کاملاً ناشناس گپ بزنی و دوستای جدید پیدا کنی.\n\n"
-            f"🔗 کانال رسمی و اطلاعیه‌های ما:\n{REQUIRED_CHANNEL_LINK}",
-            reply_markup=welcome_markup,
-            disable_web_page_preview=True,
-        )
-        bot.send_message(
-            user_id,
-            "برای شروع، اول **نام** قشنگت رو برام بنویس (تکمیل نام، جنسیت و موقعیت اجباریه):",
-            parse_mode="Markdown",
-            reply_markup=types.ReplyKeyboardRemove(),
-        )
-        return
-
-    if not user.get("photo_file_id") and initial_photo:
-        db.add_or_update_user(user_id, photo_file_id=initial_photo)
-
-    if enforce_registration_step(user_id, user):
-        return
-
-    db.set_user_state(user_id, "main_menu")
-    send_main_menu_with_link(
-        user_id,
-        f"سلام {user.get('name')} جان! خیلی خوش اومدی 🌟\n"
-        "آماده‌ای یه هم‌صحبت جدید پیدا کنی؟ از منوی پایین انتخاب کن 👇",
-    )
+    launch_user_session(user_id)
 
 
 # ==================== پنل مدیریت ۱۰۰٪ کیبوردی (/admin) ====================
@@ -1426,15 +1486,22 @@ def start_filtered_search(message):
     partner_id = db.find_match(user_id, chosen_filter)
 
     if partner_id:
-        msg_text = (
-            "🎉 هم‌صحبت پیدا شد و وصل شدید! سلام کن 👋\n"
-            "🔒 (حالت ضداسکرین‌شات و ضدذخیره فعال است)"
+        protected = is_chat_protected(user_id, partner_id)
+        priv_banner = (
+            "\n🔒 (چت خصوصی فعال است: اسکرین‌شات و فوروارد قفل شد)"
+            if protected
+            else "\n🔓 (چت عادی است؛ برای قفل اسکرین‌شات دکمه چت خصوصی را بزنید)"
+        )
+        msg_text = "🎉 هم‌صحبت پیدا شد و وصل شدید! سلام کن 👋" + priv_banner
+        bot.send_message(
+            user_id,
+            msg_text + quota_note,
+            reply_markup=get_chat_kb(user_id),
         )
         bot.send_message(
-            user_id, msg_text + quota_note, reply_markup=kb.chatting_keyboard()
-        )
-        bot.send_message(
-            partner_id, msg_text, reply_markup=kb.chatting_keyboard()
+            partner_id,
+            msg_text,
+            reply_markup=get_chat_kb(partner_id),
         )
     else:
         bot.send_message(
@@ -1472,7 +1539,7 @@ def cancel_stop_chat(message):
         bot.send_message(
             user_id,
             "✅ عالیه! به مکالمه ادامه بده 👇",
-            reply_markup=kb.chatting_keyboard(),
+            reply_markup=get_chat_kb(user_id),
         )
     else:
         db.set_user_state(user_id, "main_menu")
@@ -1487,17 +1554,19 @@ def stop_chat_confirmed(message):
     if enforce_channel_membership(user_id):
         return
 
+    USER_CONTEXT.pop(user_id, None)
     partner_id = db.disconnect_user(user_id)
     db.set_user_state(user_id, "main_menu")
     send_main_menu_with_link(user_id, "مکالمه پایان یافت. 👋")
     if partner_id:
+        USER_CONTEXT.pop(partner_id, None)
         db.set_user_state(partner_id, "main_menu")
         send_main_menu_with_link(
             partner_id, "طرف مقابل مکالمه رو ترک کرد! 🚪"
         )
 
 
-# --- امکانات داخل چت: مشاهده پروفایل، اشتراک آیدی، عکس تایم‌دار ---
+# --- امکانات داخل چت: مشاهده پروفایل، اشتراک آیدی، عکس تایم‌دار با زمان دلخواه ---
 @bot.message_handler(func=lambda msg: msg.text == "👤 مشاهده پروفایل")
 def view_partner_profile(message):
     user_id = message.chat.id
@@ -1519,8 +1588,9 @@ def view_partner_profile(message):
     except Exception:
         pass
 
+    protected = is_chat_protected(user_id, partner["user_id"])
     caption = format_profile_caption(partner, "👤 پروفایل هم‌صحبت شما:")
-    send_profile_card_with_photo(user_id, partner, caption, protect=True)
+    send_profile_card_with_photo(user_id, partner, caption, protect=protected)
 
 
 @bot.message_handler(func=lambda msg: msg.text == "🔗 اشتراک‌گذاری آیدی")
@@ -1589,7 +1659,7 @@ def request_share_id(message):
 
 
 @bot.message_handler(func=lambda msg: msg.text == "💣 ارسال عکس تایم‌دار")
-def prompt_timed_photo(message):
+def prompt_timed_photo_duration(message):
     user_id = message.chat.id
     if enforce_channel_membership(user_id):
         return
@@ -1597,10 +1667,48 @@ def prompt_timed_photo(message):
     user = db.get_user(user_id)
     if not user or user.get("status") != "chatting":
         return
-    USER_CONTEXT[user_id] = "waiting_for_timed_photo"
+    USER_CONTEXT[user_id] = "choosing_timed_photo_seconds"
     bot.send_message(
         user_id,
-        "💣 اکنون عکس خود را بفرستید تا به صورت محوشونده و ضداسکرین‌شات (۱۰ ثانیه‌ای) ارسال شود:",
+        "⏱ مدت زمان نمایش عکس تایم‌دار را انتخاب کن (بعد از اتمام زمان از صفحه هر دو نفر پاک می‌شود):",
+        reply_markup=kb.timed_photo_duration_keyboard(),
+    )
+
+
+@bot.message_handler(
+    func=lambda msg: msg.text
+    in ["⏱ ۵ ثانیه", "⏱ ۱۰ ثانیه", "⏱ ۱۵ ثانیه", "⏱ ۳۰ ثانیه", "⏱ ۶۰ ثانیه"]
+)
+def set_timed_photo_duration(message):
+    user_id = message.chat.id
+    if enforce_channel_membership(user_id):
+        return
+
+    sec_map = {
+        "⏱ ۵ ثانیه": 5,
+        "⏱ ۱۰ ثانیه": 10,
+        "⏱ ۱۵ ثانیه": 15,
+        "⏱ ۳۰ ثانیه": 30,
+        "⏱ ۶۰ ثانیه": 60,
+    }
+    chosen_sec = sec_map.get(message.text, 10)
+    USER_CONTEXT[user_id] = f"waiting_for_timed_photo_{chosen_sec}"
+    bot.send_message(
+        user_id,
+        f"💣 عالی! حالا عکس خودت رو بفرست تا به مدت **{chosen_sec} ثانیه** (ضداسکرین‌شات و محوشونده) ارسال بشه:",
+        parse_mode="Markdown",
+        reply_markup=get_chat_kb(user_id),
+    )
+
+
+@bot.message_handler(func=lambda msg: msg.text == "🔙 انصراف از عکس تایم‌دار")
+def cancel_timed_photo(message):
+    user_id = message.chat.id
+    USER_CONTEXT.pop(user_id, None)
+    bot.send_message(
+        user_id,
+        "ارسال عکس تایم‌دار لغو شد.",
+        reply_markup=get_chat_kb(user_id),
     )
 
 
@@ -1676,7 +1784,7 @@ def report_partner(message):
                 pass
 
 
-# --- موتور هدایت پیام‌های چت (با قفل کامل ضداسکرین‌شات و ضدذخیره روی تمام پیام‌ها و مدیاها) ---
+# --- موتور هدایت پیام‌های چت (با اعمال قفل اسکرین‌شات بر اساس وضعیت چت خصوصی) ---
 @bot.message_handler(
     content_types=[
         "text",
@@ -1702,6 +1810,7 @@ def relay_all_chat_messages(message):
         return
 
     partner_id = user["partner_id"]
+    protected = is_chat_protected(user_id, partner_id)
 
     if message.content_type == "sticker":
         bot.send_message(
@@ -1717,7 +1826,7 @@ def relay_all_chat_messages(message):
             )
             return
         db.log_chat_message(user_id, partner_id, "text", message.text)
-        bot.send_message(partner_id, message.text, protect_content=True)
+        bot.send_message(partner_id, message.text, protect_content=protected)
         return
 
     if message.content_type == "photo":
@@ -1727,22 +1836,28 @@ def relay_all_chat_messages(message):
             bot.send_message(user_id, "⚠️ ارسال آیدی و لینک در کپشن مجاز نیست!")
             return
 
-        if USER_CONTEXT.get(user_id) == "waiting_for_timed_photo":
+        ctx_str = str(USER_CONTEXT.get(user_id, ""))
+        if ctx_str.startswith("waiting_for_timed_photo_"):
             USER_CONTEXT.pop(user_id, None)
+            try:
+                delay_sec = int(ctx_str.replace("waiting_for_timed_photo_", ""))
+            except ValueError:
+                delay_sec = 10
+
             db.log_chat_message(
                 user_id, partner_id, "photo", fid, caption=cap, is_timed=True
             )
             sent_msg = bot.send_photo(
                 partner_id,
                 fid,
-                caption="💣 عکس تایم‌دار محافظت‌شده (۱۰ ثانیه دیگر خودکار حذف می‌شود)\n"
+                caption=f"💣 عکس تایم‌دار محافظت‌شده ({delay_sec} ثانیه دیگر خودکار حذف می‌شود)\n"
                 + cap,
                 has_spoiler=True,
                 protect_content=True,
             )
             notice = bot.send_message(
                 user_id,
-                "✅ عکس تایم‌دار ارسال شد (۱۰ ثانیه بعد از صفحه هر دو نفر پاک می‌شود).",
+                f"✅ عکس تایم‌دار ارسال شد ({delay_sec} ثانیه بعد از صفحه هر دو نفر پاک می‌شود).",
             )
             threading.Thread(
                 target=delete_timed_messages_both_sides,
@@ -1752,7 +1867,7 @@ def relay_all_chat_messages(message):
                     partner_id,
                     sent_msg.message_id,
                     notice.message_id,
-                    10,
+                    delay_sec,
                 ),
                 daemon=True,
             ).start()
@@ -1761,13 +1876,13 @@ def relay_all_chat_messages(message):
         db.log_chat_message(
             user_id, partner_id, "photo", fid, caption=cap, is_timed=False
         )
-        bot.send_photo(partner_id, fid, caption=cap, protect_content=True)
+        bot.send_photo(partner_id, fid, caption=cap, protect_content=protected)
         return
 
     if message.content_type == "voice":
         db.log_chat_message(user_id, partner_id, "voice", message.voice.file_id)
         bot.send_voice(
-            partner_id, message.voice.file_id, protect_content=True
+            partner_id, message.voice.file_id, protect_content=protected
         )
     elif message.content_type == "video":
         db.log_chat_message(
@@ -1781,7 +1896,7 @@ def relay_all_chat_messages(message):
             partner_id,
             message.video.file_id,
             caption=message.caption or "",
-            protect_content=True,
+            protect_content=protected,
         )
     elif message.content_type == "audio":
         db.log_chat_message(
@@ -1795,7 +1910,7 @@ def relay_all_chat_messages(message):
             partner_id,
             message.audio.file_id,
             caption=message.caption or "",
-            protect_content=True,
+            protect_content=protected,
         )
     elif message.content_type == "document":
         db.log_chat_message(
@@ -1809,7 +1924,7 @@ def relay_all_chat_messages(message):
             partner_id,
             message.document.file_id,
             caption=message.caption or "",
-            protect_content=True,
+            protect_content=protected,
         )
 
 

@@ -139,11 +139,15 @@ IRAN_PROVINCES = {
 }
 
 
-# ۱. منوی اصلی پایین صفحه
-def main_menu_keyboard(is_admin=False):
+# ۱. منوی اصلی پایین صفحه (همراه با دکمه تنظیمات چت خصوصی)
+def main_menu_keyboard(is_admin=False, private_mode=False):
+    priv_label = "🔒 چت خصوصی: روشن ✅" if private_mode else "🔓 چت خصوصی: خاموش ❌"
     markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
     markup.row(types.KeyboardButton("⚡ به یه ناشناس وصلم کن!"))
-    markup.row(types.KeyboardButton("👤 پروفایل من"))
+    markup.row(
+        types.KeyboardButton("👤 پروفایل من"),
+        types.KeyboardButton(priv_label),
+    )
     if is_admin:
         markup.row(types.KeyboardButton("🎛 پنل مدیریت"))
     return markup
@@ -161,8 +165,9 @@ def connect_filter_keyboard():
     return markup
 
 
-# ۳. کیبورد حین چت فعال
-def chatting_keyboard():
+# ۳. کیبورد حین چت فعال (همراه با دکمه تنظیمات چت خصوصی)
+def chatting_keyboard(private_mode=False):
+    priv_label = "🔒 چت خصوصی: روشن ✅" if private_mode else "🔓 چت خصوصی: خاموش ❌"
     markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
     markup.row(
         types.KeyboardButton("⏭ هم‌صحبت بعدی"),
@@ -174,8 +179,25 @@ def chatting_keyboard():
     )
     markup.row(
         types.KeyboardButton("🔗 اشتراک‌گذاری آیدی"),
-        types.KeyboardButton("⚠️ گزارش تخلف"),
+        types.KeyboardButton(priv_label),
     )
+    markup.row(types.KeyboardButton("⚠️ گزارش تخلف"))
+    return markup
+
+
+# کیبورد انتخاب زمان عکس تایم‌دار توسط کاربر
+def timed_photo_duration_keyboard():
+    markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
+    markup.row(
+        types.KeyboardButton("⏱ ۵ ثانیه"),
+        types.KeyboardButton("⏱ ۱۰ ثانیه"),
+        types.KeyboardButton("⏱ ۱۵ ثانیه"),
+    )
+    markup.row(
+        types.KeyboardButton("⏱ ۳۰ ثانیه"),
+        types.KeyboardButton("⏱ ۶۰ ثانیه"),
+    )
+    markup.row(types.KeyboardButton("🔙 انصراف از عکس تایم‌دار"))
     return markup
 
 

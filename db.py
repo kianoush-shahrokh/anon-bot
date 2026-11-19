@@ -47,6 +47,7 @@ def init_db():
                 state VARCHAR(50) DEFAULT 'main_menu',
                 prev_state VARCHAR(50) DEFAULT 'main_menu',
                 is_banned BOOLEAN DEFAULT FALSE,
+                private_chat BOOLEAN DEFAULT FALSE,
                 girl_search_count INT DEFAULT 0,
                 girl_search_reset_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 last_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP
@@ -59,6 +60,7 @@ def init_db():
             "ALTER TABLE anon_users ADD COLUMN IF NOT EXISTS last_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP;",
             "ALTER TABLE anon_users ADD COLUMN IF NOT EXISTS girl_search_count INT DEFAULT 0;",
             "ALTER TABLE anon_users ADD COLUMN IF NOT EXISTS girl_search_reset_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP;",
+            "ALTER TABLE anon_users ADD COLUMN IF NOT EXISTS private_chat BOOLEAN DEFAULT FALSE;",
         ]
         for q in alter_queries:
             cur.execute(q)
@@ -181,11 +183,29 @@ def set_user_state(user_id, new_state):
         put_conn(conn)
 
 
+def toggle_private_mode(user_id):
+    """تغییر وضعیت چت خصوصی (ضداسکرین‌شات/ضدذخیره) و برگرداندن وضعیت جدید (True/False)"""
+    conn = get_conn()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            UPDATE anon_users
+            SET private_chat = NOT COALESCE(private_chat, FALSE), last_seen = CURRENT_TIMESTAMP
+            WHERE user_id = %s
+            RETURNING private_chat;
+        """,
+            (user_id,),
+        )
+        row = cur.fetchone()
+        conn.commit()
+        cur.close()
+        return bool(row[0]) if row else False
+    finally:
+        put_conn(conn)
+
+
 def add_user_report(reporter_id, reported_id):
-    """
-    ثبت گزارش جدید از یک کاربر علیه کاربر دیگر.
-    برمی‌گرداند: (آیا_جدید_بود: bool, تعداد_کل_گزارش‌های_یکتا: int)
-    """
     conn = get_conn()
     try:
         cur = conn.cursor()
@@ -214,11 +234,6 @@ def add_user_report(reporter_id, reported_id):
 
 
 def check_and_use_girl_search(user_id, max_per_hour=5):
-    """
-    بررسی سهمیه ساعتی جستجوی دختر (۵ بار در هر ساعت):
-    - اگر ۱ ساعت از اولین جستجوی دوره گذشته باشد، سهمیه ریست می‌شود.
-    - برمی‌گرداند: (مجاز_است: bool, تعداد_باقی‌مانده: int, دقیقه_تا_تمدید: int)
-    """
     conn = get_conn()
     try:
         cur = conn.cursor(cursor_factory=RealDictCursor)
@@ -277,7 +292,6 @@ def check_and_use_girl_search(user_id, max_per_hour=5):
 
 
 def find_match(user_id, filter_type="any"):
-    """پیدا کردن هم‌صحبت بر اساس فیلتر انتخابی (شانسی، دختر، پسر)"""
     user = get_user(user_id)
     if not user:
         return None
