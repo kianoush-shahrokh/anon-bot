@@ -685,7 +685,7 @@ def exit_admin_panel(message):
     send_main_menu_with_link(uid)
 
 
-# --- بخش چت مستقیم مدیر با کاربران ---
+# --- بخش چت با کاربران ---
 @bot.message_handler(
     func=lambda msg: is_admin(msg.chat.id)
     and msg.text in ["💬 چت با کاربران", "🔙 بازگشت به انتخاب جنسیت"]
@@ -788,8 +788,7 @@ def admin_stats_button(message):
     bot.send_message(uid, text, reply_markup=kb.admin_main_reply_kb())
 
 
-# ==================== جریان دو سطحی: لیست تمام کاربران -> پروفایل یا چت‌ها ====================
-
+# --- بخش لیست تمام کاربران با منوی انتخابی (پروفایل یا چت‌ها در هر دو سطح) ---
 @bot.message_handler(
     func=lambda msg: is_admin(msg.chat.id)
     and msg.text in ["👥 لیست تمام کاربران", "🔙 بازگشت به لیست کاربران"]
@@ -805,7 +804,6 @@ def admin_show_all_users(message):
     )
 
 
-# سطح ۱: کلیک روی کاربر از لیست تمام کاربران -> انتخاب بین پروفایل یا چت‌هایش با افراد
 @bot.message_handler(
     func=lambda msg: is_admin(msg.chat.id)
     and msg.text
@@ -823,31 +821,31 @@ def admin_select_user_from_kb(message):
     USER_CONTEXT[f"admin_selected_u1_{uid}"] = target["user_id"]
     bot.send_message(
         uid,
-        f"👤 کاربر «{target.get('name')}» (/{target.get('custom_id')}) انتخاب شد.\n"
-        f"کدام بخش را می‌خواهید مشاهده کنید؟ 👇",
-        reply_markup=kb.admin_user_action_kb(),
+        f"👤 کاربر انتخاب‌شده: **{target.get('name') or 'ناشناس'}** (`/{target.get('custom_id')}`)\n"
+        f"کدام بخش را می‌خواهید ببینید؟",
+        parse_mode="Markdown",
+        reply_markup=kb.admin_user_choice_kb(),
     )
 
 
 @bot.message_handler(
     func=lambda msg: is_admin(msg.chat.id)
-    and msg.text == "🔙 بازگشت به انتخاب کاربر"
+    and msg.text == "🔙 بازگشت به گزینه‌های کاربر"
 )
-def admin_back_to_u1_action(message):
+def admin_back_to_user_choice(message):
     uid = message.chat.id
     u1_id = USER_CONTEXT.get(f"admin_selected_u1_{uid}")
     if not u1_id:
         admin_show_all_users(message)
         return
     target = db.get_user(u1_id)
-    if not target:
-        admin_show_all_users(message)
-        return
+    name = target.get("name") if target else str(u1_id)
+    cid = target.get("custom_id") if target else str(u1_id)
     bot.send_message(
         uid,
-        f"👤 کاربر «{target.get('name')}» (/{target.get('custom_id')}):\n"
-        f"کدام بخش را می‌خواهید مشاهده کنید؟ 👇",
-        reply_markup=kb.admin_user_action_kb(),
+        f"👤 کاربر انتخاب‌شده: **{name}** (`/{cid}`)\nکدام بخش را می‌خواهید ببینید؟",
+        parse_mode="Markdown",
+        reply_markup=kb.admin_user_choice_kb(),
     )
 
 
@@ -861,24 +859,25 @@ def admin_show_u1_profile(message):
     if not u1_id:
         bot.send_message(
             uid,
-            "ابتدا یک کاربر را از لیست انتخاب کنید.",
+            "ابتدا یک کاربر را انتخاب کنید.",
             reply_markup=kb.admin_main_reply_kb(),
         )
         return
+
     target = db.get_user(u1_id)
     if not target:
         bot.send_message(uid, "❌ کاربر یافت نشد.")
         return
 
-    caption = format_profile_caption(target, "👤 پروفایل و مشخصات کامل کاربر:")
+    caption = format_profile_caption(target, "👤 پروفایل و مشخصات کاربر:")
     send_profile_card_with_photo(
-        uid, target, caption, reply_markup=kb.admin_user_action_kb()
+        uid, target, caption, reply_markup=kb.admin_user_choice_kb()
     )
 
 
 @bot.message_handler(
     func=lambda msg: is_admin(msg.chat.id)
-    and msg.text in ["💬 چت‌هایش با افراد", "🔙 بازگشت به هم‌صحبت‌ها"]
+    and msg.text in ["💬 چت‌هایش با افراد", "🔙 بازگشت به لیست هم‌صحبت‌ها"]
 )
 def admin_show_u1_partners(message):
     uid = message.chat.id
@@ -886,7 +885,7 @@ def admin_show_u1_partners(message):
     if not u1_id:
         bot.send_message(
             uid,
-            "ابتدا یک کاربر را از لیست انتخاب کنید.",
+            "ابتدا از لیست کاربران یک نفر را انتخاب کنید.",
             reply_markup=kb.admin_main_reply_kb(),
         )
         return
@@ -898,19 +897,18 @@ def admin_show_u1_partners(message):
         bot.send_message(
             uid,
             f"👤 کاربر «{target.get('name')}» (/{target.get('custom_id')}) تا به حال با هیچ‌کس چت نکرده است.",
-            reply_markup=kb.admin_user_action_kb(),
+            reply_markup=kb.admin_user_choice_kb(),
         )
         return
 
     bot.send_message(
         uid,
         f"👤 کاربر: {target.get('name')} (/{target.get('custom_id')})\n"
-        f"👇 با این {len(partners)} نفر چت کرده است (روی هر نفر بزنید تا پروفایل یا چت‌هایشان را ببینید):",
+        f"👇 با این {len(partners)} نفر چت کرده است (روی هر نفر بزنید تا پروفایل یا چت‌هایش را انتخاب کنید):",
         reply_markup=kb.admin_partners_reply_kb(partners),
     )
 
 
-# سطح ۲: کلیک روی هم‌صحبت (U2) -> انتخاب بین پروفایل هم‌صحبت یا مشاهده چت‌هایشان
 @bot.message_handler(
     func=lambda msg: is_admin(msg.chat.id)
     and msg.text
@@ -931,16 +929,15 @@ def admin_select_partner_from_kb(message):
     cid2 = message.text.split("|")[-1].strip()
     u2 = db.get_user_by_custom_id(cid2)
     u2_id = u2["user_id"] if u2 else int(cid2)
+    u2_name = (u2.get("name") if u2 else None) or f"کاربر {u2_id}"
 
     USER_CONTEXT[f"admin_selected_u2_{uid}"] = u2_id
-    u2_name = u2.get("name") if u2 else f"کاربر {u2_id}"
-    u2_cid = u2.get("custom_id") if u2 else str(u2_id)
-
     bot.send_message(
         uid,
-        f"💬 هم‌صحبت «{u2_name}» (/{u2_cid}) انتخاب شد.\n"
-        f"کدام مورد را می‌خواهید ببینید؟ 👇",
-        reply_markup=kb.admin_partner_action_kb(),
+        f"💬 هم‌صحبت انتخاب‌شده: **{u2_name}** (`/{cid2}`)\n"
+        f"می‌خواهید پروفایل این هم‌صحبت را ببینید یا چت‌های بین این دو نفر را؟",
+        parse_mode="Markdown",
+        reply_markup=kb.admin_partner_choice_kb(),
     )
 
 
@@ -954,38 +951,38 @@ def admin_show_u2_profile(message):
     if not u2_id:
         bot.send_message(
             uid,
-            "ابتدا یکی از هم‌صحبت‌ها را انتخاب کنید.",
+            "ابتدا یک هم‌صحبت را انتخاب کنید.",
             reply_markup=kb.admin_main_reply_kb(),
         )
         return
 
-    u2 = db.get_user(u2_id)
-    if not u2:
+    target2 = db.get_user(u2_id)
+    if not target2:
         bot.send_message(
             uid,
-            f"اطلاعات پروفایل برای کاربر {u2_id} موجود نیست.",
-            reply_markup=kb.admin_partner_action_kb(),
+            f"❌ مشخصات این کاربر ({u2_id}) در دیتابیس یافت نشد.",
+            reply_markup=kb.admin_partner_choice_kb(),
         )
         return
 
-    caption = format_profile_caption(u2, "👤 پروفایل هم‌صحبت انتخاب‌شده:")
+    caption = format_profile_caption(target2, "👤 پروفایل و مشخصات هم‌صحبت:")
     send_profile_card_with_photo(
-        uid, u2, caption, reply_markup=kb.admin_partner_action_kb()
+        uid, target2, caption, reply_markup=kb.admin_partner_choice_kb()
     )
 
 
 @bot.message_handler(
     func=lambda msg: is_admin(msg.chat.id)
-    and msg.text == "📜 مشاهده چت‌هایشان"
+    and msg.text == "📜 مشاهده چت‌های این دو نفر"
 )
-def admin_show_u1_u2_chat_history(message):
+def admin_show_u1_u2_chats(message):
     uid = message.chat.id
     u1_id = USER_CONTEXT.get(f"admin_selected_u1_{uid}")
     u2_id = USER_CONTEXT.get(f"admin_selected_u2_{uid}")
     if not u1_id or not u2_id:
         bot.send_message(
             uid,
-            "ابتدا کاربر و هم‌صحبتش را انتخاب کنید.",
+            "ابتدا کاربر و هم‌صحبت را انتخاب کنید.",
             reply_markup=kb.admin_main_reply_kb(),
         )
         return
@@ -998,7 +995,7 @@ def admin_show_u1_u2_chat_history(message):
         bot.send_message(
             uid,
             "هیچ پیامی بین این دو نفر یافت نشد.",
-            reply_markup=kb.admin_partner_action_kb(),
+            reply_markup=kb.admin_partner_choice_kb(),
         )
         return
 
@@ -1058,7 +1055,7 @@ def admin_show_u1_u2_chat_history(message):
             final_text[i : i + 3800],
             parse_mode="HTML",
             disable_web_page_preview=True,
-            reply_markup=kb.admin_partner_action_kb(),
+            reply_markup=kb.admin_partner_choice_kb(),
         )
 
 
