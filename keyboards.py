@@ -390,9 +390,20 @@ def admin_users_reply_kb(users):
     return markup
 
 
+# مرحله انتخاب عملیات روی کاربر اصلی (پروفایل یا چت‌هایش)
+def admin_user_action_kb():
+    markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
+    markup.row(
+        types.KeyboardButton("👤 پروفایل و مشخصات کاربر"),
+        types.KeyboardButton("💬 چت‌هایش با افراد"),
+    )
+    markup.row(types.KeyboardButton("🔙 بازگشت به لیست کاربران"))
+    return markup
+
+
 def admin_partners_reply_kb(partners):
     markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
-    markup.row(types.KeyboardButton("🔙 بازگشت به لیست کاربران"))
+    markup.row(types.KeyboardButton("🔙 بازگشت به انتخاب کاربر"))
     row = []
     for p in partners:
         name = (p.get("name") or "ناشناس")[:14]
@@ -403,4 +414,15 @@ def admin_partners_reply_kb(partners):
             row = []
     if row:
         markup.row(*row)
+    return markup
+
+
+# مرحله انتخاب عملیات روی هم‌صحبت انتخاب‌شده (پروفایل هم‌صحبت یا چت‌هایشان)
+def admin_partner_action_kb():
+    markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
+    markup.row(
+        types.KeyboardButton("👤 پروفایل این هم‌صحبت"),
+        types.KeyboardButton("📜 مشاهده چت‌هایشان"),
+    )
+    markup.row(types.KeyboardButton("🔙 بازگشت به هم‌صحبت‌ها"))
     return markup
