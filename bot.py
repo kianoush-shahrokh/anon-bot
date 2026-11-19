@@ -267,11 +267,37 @@ def send_profile_card_with_photo(
         )
 
 
-def format_profile_caption(u, title="👤 مشخصات حساب شما:"):
+def format_profile_caption(u, title="👤 مشخصات حساب شما:", viewer_id=None):
     icon = "👦" if u.get("gender") == "پسر" else "👧"
     status_str = "👀 آنلاین"
     if u.get("status") == "chatting":
         status_str = "🗣 در حال چت"
+
+    admin_extra = ""
+    if viewer_id is not None and is_admin(viewer_id) and int(viewer_id) != int(u["user_id"]):
+        tg_username = None
+        try:
+            chat_info = bot.get_chat(u["user_id"])
+            tg_username = chat_info.username
+        except Exception:
+            tg_username = None
+
+        if tg_username:
+            admin_extra = (
+                f"\n〰️〰️〰️〰️〰️〰️〰️〰️\n"
+                f"👑 اطلاعات ویژه مدیریت:\n"
+                f"📱 آیدی عمومی تلگرام: @{tg_username}\n"
+                f"🔢 آیدی عددی: {u['user_id']}"
+            )
+        else:
+            admin_extra = (
+                f"\n〰️〰️〰️〰️〰️〰️〰️〰️\n"
+                f"👑 اطلاعات ویژه مدیریت:\n"
+                f"📱 آیدی عمومی تلگرام: ندارد (بدون یوزرنیم)\n"
+                f"🔢 آیدی عددی: {u['user_id']}\n"
+                f"🔗 لینک اکانت: tg://user?id={u['user_id']}"
+            )
+
     return (
         f"{title}\n"
         f"〰️〰️〰️〰️〰️〰️〰️〰️\n"
@@ -281,6 +307,7 @@ def format_profile_caption(u, title="👤 مشخصات حساب شما:"):
         f"📍 موقعیت: {u.get('province') or '-'} ({u.get('city') or '-'})\n"
         f"📡 وضعیت: {status_str}\n"
         f"🆔 شناسه: /{u.get('custom_id')}"
+        f"{admin_extra}"
     )
 
 
@@ -762,7 +789,9 @@ def admin_view_user_profile_to_chat(message):
         ),
     )
 
-    caption = format_profile_caption(target, "👤 پروفایل کامل کاربر:")
+    caption = format_profile_caption(
+        target, "👤 پروفایل کامل کاربر:", viewer_id=uid
+    )
     send_profile_card_with_photo(uid, target, caption, reply_markup=markup)
 
 
@@ -880,7 +909,9 @@ def admin_show_u1_profile(message):
         bot.send_message(uid, "❌ کاربر یافت نشد.")
         return
 
-    caption = format_profile_caption(target, "👤 پروفایل و مشخصات کاربر:")
+    caption = format_profile_caption(
+        target, "👤 پروفایل و مشخصات کاربر:", viewer_id=uid
+    )
     send_profile_card_with_photo(
         uid, target, caption, reply_markup=kb.admin_user_action_kb()
     )
@@ -975,7 +1006,9 @@ def admin_show_u2_profile(message):
         )
         return
 
-    caption = format_profile_caption(target2, "👤 پروفایل و مشخصات هم‌صحبت:")
+    caption = format_profile_caption(
+        target2, "👤 پروفایل و مشخصات هم‌صحبت:", viewer_id=uid
+    )
     send_profile_card_with_photo(
         uid, target2, caption, reply_markup=kb.admin_partner_action_kb()
     )
@@ -1360,7 +1393,6 @@ def set_city(message):
     db.add_or_update_user(user_id, city=city_name)
     user = db.get_user(user_id)
 
-    # اگر هنوز هرکدام از ۵ فیلد اصلی ناقص است، کاربر را به همان مرحله اجباری بفرست
     if enforce_registration_step(user_id, user):
         return
 
@@ -1731,7 +1763,7 @@ def stop_chat_confirmed(message):
         )
 
 
-# --- امکانات داخل چت: مشاهده پروفایل، اشتراک آیدی، عکس تایم‌دار با زمان دلخواه ---
+# --- امکانات داخل چت: مشاهده پروفایل (نمایش آیدی عمومی تلگرام فقط برای مدیران) ---
 @bot.message_handler(func=lambda msg: msg.text == "👤 مشاهده پروفایل")
 def view_partner_profile(message):
     user_id = message.chat.id
@@ -1754,7 +1786,9 @@ def view_partner_profile(message):
         pass
 
     protected = is_chat_protected(user_id, partner["user_id"])
-    caption = format_profile_caption(partner, "👤 پروفایل هم‌صحبت شما:")
+    caption = format_profile_caption(
+        partner, "👤 پروفایل هم‌صحبت شما:", viewer_id=user_id
+    )
     send_profile_card_with_photo(user_id, partner, caption, protect=protected)
 
 
